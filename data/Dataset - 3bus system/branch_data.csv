@@ -1,0 +1,4 @@
+﻿From_Bus;To_Bus;Transmission_Capacity;Reactance
+1;2;1000;0.1
+1;3;100;0.05
+2;3;45;0.1

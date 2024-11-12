@@ -1,0 +1,4 @@
+Gen_id;Energy_Cost;Max_gen;Min_gen;Ramp_Limit;Up_reserve_cost;Dn_reserve_cost;Redispatch_Cost;Gen_Bus
+1;100;100;0;100;50;50;10;1
+2;150;50;0;50;75;75;15;2
+3;1000;1000;0;1000;200;200;100;3
