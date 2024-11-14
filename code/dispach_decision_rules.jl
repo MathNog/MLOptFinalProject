@@ -1,67 +1,42 @@
-using JuMP, Gurobi, CSV, DataFrames, Random, Distributions
+using JuMP, Gurobi, CSV, DataFrames
+using Plots,  Random, Distributions
 
-path_data = pwd() * "/data/"
-experiment = "Dataset - 3bus system/"
-# experiment = "Dataset - 300 bus system"
+function get_demand_3buses(ϕ0)
+    d = zeros(T[end]+1, NΩ, B[end])
+    d̂ = zeros(T[end]+1, NΩ, B[end])
+    d[1, :, :] .= d0
+    d̂[1, :, :] .= d0
 
-branch     = CSV.read(path_data * experiment * "branch_data.csv", DataFrame)
-bus        = CSV.read(path_data * experiment * "bus_data.csv", DataFrame)
-demand     = CSV.read(path_data * experiment * "demand_data.csv", DataFrame)
-gen        = CSV.read(path_data * experiment * "gen_data.csv", DataFrame)
-simulation = CSV.read(path_data * experiment * "simulation_data.csv", DataFrame)
+    Random.seed!(1234)
+    ϵ = rand(Normal(0, 3), (T[end]+1, NΩ, B[end]))
+    ϕ = simulation.phi_1
+    for t in T
+        d[t+1, :, :] .= (ϕ0 .+ ϕ.*d[t,:,:] .+ ϵ[t+1, :, :]) .* Load'
+        d̂[t+1,:,:]   .= (ϕ0 .+ ϕ.*d[t,:,:]) .* Load'
+    end
 
-# Sets and indexes
-Lines   = collect(axes(branch, 1))
-B       = bus.Bus_id
-L_plus  = [findall(x -> x == b, branch.From_Bus) for b in B]
-L_minus = [findall(x -> x == b, branch.To_Bus) for b in B]
-b_plus  = [[j] for j in branch.From_Bus]
-b_minus = [[j] for j in branch.To_Bus]
-G       = bus.Gen_id
-Ub      = [findall(x -> x == b, gen.Gen_Bus) for b in B]
-nL      = simulation.L[1]
-L       = collect(1:nL)
-T       = collect(1:simulation.T[1])
-NΩ      = simulation.S[1]
-Ω       = collect(1:NΩ)
-Load    = bus.Load_id
-
-# Parameters
-d0    = simulation.d0[1]
-c_g   = gen.Energy_Cost
-c_up  = gen.Up_reserve_cost
-c_dn  = gen.Dn_reserve_cost
-G_max = gen.Max_gen
-G_min = gen.Min_gen
-c_δ   = ones(length(B))*(1.1*maximum(c_g))
-c_γ   = ones(length(B))*(0.1*maximum(c_g))
-F     = branch.Transmission_Capacity 
-x     = branch.Reactance
-p     = ones(NΩ)/NΩ
-RD_dn = gen.Ramp_Limit
-RD_up = gen.Ramp_Limit
-R_dn  = gen.Max_gen
-R_up  = gen.Max_gen
-Gb    = [sum(G_max[g] for g in Ub[b]) for b in B]
-
-d = zeros(T[end]+1, NΩ, B[end])
-d̂ = zeros(T[end]+1, NΩ, B[end])
-d[1, :, :] .= d0
-d̂[1, :, :] .= d0
-
-Random.seed!(1234)
-ϵ = rand(Normal(0, 3), (T[end]+1, NΩ, B[end]))
-ϕ = simulation.phi_1
-for t in T
-    d[t+1, :, :] .= (20 .+ ϕ.*d[t,:,:] .+ ϵ[t+1, :, :]) .* Load'
-    d̂[t+1,:,:]   .= (20 .+ ϕ.*d[t,:,:]) .* Load'
+    d = d[2:end,:,:]
+    d̂ = d̂[2:end,:,:]
+    return d, d̂
 end
 
-d = d[2:end,:,:]
-d̂ = d̂[2:end,:,:]
+function get_data(path_data, experiment)
 
-plot(d̂[:, 1, 3])
-plot(d[:, 1, 3])
+    if experiment == "Dataset - 300 bus system"
+        prefix = "ieee300bus"
+        initial_demand = CSV.read(path_data * experiment * prefix * "initial_demand_data.csv", DataFrame)
+    else
+        prefix = ""
+        initial_demand = nothing
+    end
+    branch     = CSV.read(path_data * experiment * prefix * "branch_data.csv", DataFrame)
+    bus        = CSV.read(path_data * experiment * prefix * "bus_data.csv", DataFrame)
+    demand     = CSV.read(path_data * experiment * prefix * "demand_data.csv", DataFrame)
+    gen        = CSV.read(path_data * experiment * prefix * "gen_data.csv", DataFrame)
+    simulation = CSV.read(path_data * experiment * prefix * "simulation_data.csv", DataFrame)
+    return branch, bus, demand, gen, simulation, initial_demand
+end
+
 
 function DispachLinear(λ)
     # Definir o modelo de otimização
@@ -288,18 +263,68 @@ function DispachPiecewiseLinear(λ)
     return value.(g), value(expected_cost)
 end
 
+function lift_demand(d, max_d, min_d, R, B, Ω)
 
-R     = 5
-min_d = minimum(d) 
-max_d = maximum(d)
-Z     = uniform_intervals(R, min_d, max_d)
+    Z = uniform_intervals(R, min_d, max_d)
 
-d_lift = zeros(T[end], NΩ, B[end], R);
-d̂_lift = zeros(T[end], NΩ, B[end], R);
-for b in B, ω in Ω
-    d_lift[:, ω, b, :] = create_lifted_variable(d[:, ω, b], Z)
-    d̂_lift[:, ω, b, :] = create_lifted_variable(d̂[:, ω, b], Z)
+    d_lift = zeros(T[end], NΩ, B[end], R);
+    for b in B, ω in Ω
+        d_lift[:, ω, b, :] = create_lifted_variable(d[:, ω, b], Z)
+    end
+    return d_lift
 end
+
+
+path_data = pwd() * "/data/"
+experiment = "Dataset - 3bus system/"
+# experiment = "Dataset - 300 bus system"
+
+branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, experiment);
+
+# Sets and indexes
+Lines   = collect(axes(branch, 1))
+B       = bus.Bus_id
+L_plus  = [findall(x -> x == b, branch.From_Bus) for b in B]
+L_minus = [findall(x -> x == b, branch.To_Bus) for b in B]
+b_plus  = [[j] for j in branch.From_Bus]
+b_minus = [[j] for j in branch.To_Bus]
+G       = bus.Gen_id
+Ub      = [findall(x -> x == b, gen.Gen_Bus) for b in B]
+nL      = simulation.L[1]
+L       = collect(1:nL)
+T       = collect(1:simulation.T[1])
+NΩ      = simulation.S[1]
+Ω       = collect(1:NΩ)
+Load    = bus.Load_id
+
+# Parameters
+d0    = simulation.d0[1]
+c_g   = gen.Energy_Cost
+c_up  = gen.Up_reserve_cost
+c_dn  = gen.Dn_reserve_cost
+G_max = gen.Max_gen
+G_min = gen.Min_gen
+c_δ   = ones(length(B))*(1.1*maximum(c_g))
+c_γ   = ones(length(B))*(0.1*maximum(c_g))
+F     = branch.Transmission_Capacity 
+x     = branch.Reactance
+p     = ones(NΩ)/NΩ
+RD_dn = gen.Ramp_Limit
+RD_up = gen.Ramp_Limit
+R_dn  = gen.Max_gen
+R_up  = gen.Max_gen
+Gb    = [sum(G_max[g] for g in Ub[b]) for b in B]
+
+d, d̂ = get_demand_3buses(20)
+
+plot(d̂[:, 1, 3])
+plot(d[:, 1, 3])
+
+max_d = maximum(d)
+min_d = minimum(d)
+
+d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
+d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
 g_opt, cost_opt = DispachLinear(0);
 g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(0);
