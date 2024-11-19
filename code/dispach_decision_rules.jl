@@ -1,9 +1,10 @@
 using JuMP, Gurobi, CSV, DataFrames
-using Plots,  Random, Distributions
+using Plots,  Random, Distributions, StateSpaceModels
 
-function get_demand_3buses(ϕ0)
-    d = zeros(T[end]+1, NΩ, B[end])
-    d̂ = zeros(T[end]+1, NΩ, B[end])
+function get_demand_buses(ϕ0, d0)
+    d = zeros(T[end]+1, NΩ, length(B))
+    d̂ = zeros(T[end]+1, NΩ, length(B))
+    
     d[1, :, :] .= d0
     d̂[1, :, :] .= d0
 
@@ -20,10 +21,38 @@ function get_demand_3buses(ϕ0)
     return d, d̂
 end
 
+function simulate_demand(df_season, NΩ, σ; seed = 123)
+    T = size(df_season, 1)
+    d̂ = zeros(T, NΩ)
+    Random.seed!(seed)
+    for t in 1:T
+        d̂[t, :]  = rand(Normal.(df_season[t, 2], df_season[t, 3]),NΩ)
+    end
+
+    d = deepcopy(d̂) .+ rand(Normal(0, σ), T, NΩ)
+    return d, d̂
+end
+
+function get_demand_bus(d, d̂, B, d0)
+    T, NΩ = size(d)
+    new_d = zeros(T[end], NΩ, length(B))
+    new_d̂ = zeros(T[end], NΩ, length(B))
+
+    prop = d0 ./ sum(d0)
+
+    for b in 1:length(B)    
+        new_d[:, :, b] .= d .* prop[b]
+        new_d̂[:, :, b] .= d̂ .* prop[b]
+    end
+    
+    return new_d, new_d̂
+    
+end
+
 function get_data(path_data, experiment)
 
-    if experiment == "Dataset - 300 bus system"
-        prefix = "ieee300bus"
+    if experiment == "Dataset - 300 bus system/"
+        prefix = "ieee300bus_"
         initial_demand = CSV.read(path_data * experiment * prefix * "initial_demand_data.csv", DataFrame)
     else
         prefix = ""
@@ -37,6 +66,79 @@ function get_data(path_data, experiment)
     return branch, bus, demand, gen, simulation, initial_demand
 end
 
+
+function DispachPerfectInformation()
+    # Definir o modelo de otimização
+    model = Model(Gurobi.Optimizer)
+
+    # Índices e conjuntos
+    @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
+    @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
+    @variable(model, r_dn[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^dn
+
+    @variable(model, f_RT[t in T, ω in Ω, j in Lines])  # Variável f^{RT} para fluxo
+    @variable(model, f[t in T, ω in Ω, j in Lines])  # Variável f para fluxo
+
+    @variable(model, γ[t in T, ω in Ω, b in B] >= 0)  # Variável γ para cargas
+    @variable(model, γ_RT[t in T, ω in Ω, b in B] >= 0)  # Variável γ^{RT}
+
+    @variable(model, δ[t in T, ω in Ω, b in B] >= 0)  # Variável δ para derivação
+    @variable(model, δ_RT[t in T, ω in Ω, b in B] >= 0)  # Variável δ^{RT}
+
+    @variable(model, θ[t in T, ω in Ω, b in B] >= 0)  # Variável θ para derivação
+    @variable(model, θ_RT[t in T, ω in Ω, b in B] >= 0)  # Variável θ^{RT}
+
+    @variable(model, Δ[t in T, ω in Ω, i in G])
+
+    # Função objetivo
+    @expression(model, expected_cost, sum(p[ω] *
+                                        sum(sum(c_g[i] * g[t, ω, i] + c_up[i] * r_up[t, ω, i] + c_dn[i] * r_dn[t, ω, i] for i in G) +
+                                            sum(c_δ[b] * (δ[t, ω, b] + δ_RT[t, ω, b]) + c_γ[b] * (γ[t, ω, b] + γ_RT[t, ω, b]) for b in B)
+                                            for t in T) 
+                                        for ω in Ω))
+    @objective(model, Min, expected_cost)
+
+    # Restrição (2)
+    @constraint(model, Rest2[ω in Ω, t in T, b in B], sum(g[t, ω, i] for i in Ub[b]) + sum(f[t, ω, j] for j in L_plus[b]) - sum(f[t, ω, j] for j in L_minus[b]) +
+                                                    δ[t, ω, b] - γ[t, ω, b] == d̂[t, ω, b])
+
+    # Restrição (3)
+    @constraint(model, Rest3[ω in Ω, t in T, b in B], sum(g[t, ω, i] +  Δ[t, ω, i] for i in Ub[b]) + 
+                                                    sum(f_RT[t, ω, j] for j in L_plus[b]) - sum(f_RT[t, ω, j] for j in L_minus[b]) + 
+                                                    δ_RT[t, ω, b] - γ_RT[t, ω, b] == d[t, ω, b])
+
+    # Restrição (4)
+    @constraint(model, [ω in Ω, t in T, j in Lines], f[t, ω, j] == (θ[t, ω, b_plus[j]...] - θ[t, ω, b_minus[j]...]) / x[j])
+
+    # Restrição (5)
+    @constraint(model, [ω in Ω, t in T, j in Lines], f_RT[t, ω, j] == (θ_RT[t, ω, b_plus[j]...] - θ_RT[t, ω, b_minus[j]...]) / x[j])
+
+    # Restrição (6)
+    @constraint(model, [t in T, ω in Ω, j in Lines], -F[j] <= f[t, ω, j] <= F[j])
+
+    # Restrição (7)
+    @constraint(model, [t in T, ω in Ω, j in Lines], -F[j] <= f_RT[t, ω, j] <= F[j])
+
+    @constraint(model, [t in T, ω in Ω, i in G], G_min[i] <= g[t, ω, i] <= G_max[i])  # Restrição (8)
+    @constraint(model, [t in T, ω in Ω, i in G], g[t, ω, i] + r_up[t, ω, i] <= G_max[i])  # Restrição (9)
+    @constraint(model, [t in T, ω in Ω, i in G], g[t, ω, i] - r_dn[t, ω, i] >= G_min[i])  # Restrição (10)
+
+    @constraint(model, [t in T[2:end], ω in Ω, i in G], -RD_dn[i] <= g[t, ω, i] + Δ[t, ω, i] - g[t-1, ω, i] - Δ[t-1, ω, i] <= RD_up[i])  # Restrição (11)
+    @constraint(model, [t in T, ω in Ω, i in G], -r_dn[t, ω, i] <= Δ[t, ω, i])  # Restrição (12a)
+    @constraint(model, [t in T, ω in Ω, i in G],  r_up[t, ω, i] >= Δ[t, ω, i])  # Restrição (12b)
+    @constraint(model, [t in T, ω in Ω, i in G], r_up[t, ω, i] <= R_up[i])  # Restrição (13)
+    @constraint(model, [t in T, ω in Ω, i in G], r_dn[t, ω, i] <= R_dn[i])  # Restrição (14)
+
+    @constraint(model, [t in T, ω in Ω, b in B], δ[t, ω, b] <= d̂[t, ω, b])  # Restrição (15)
+    @constraint(model, [t in T, ω in Ω, b in B], δ_RT[t, ω, b] <= d[t, ω, b])  # Restrição (16)
+    @constraint(model, [t in T, ω in Ω, b in B], γ[t, ω, b] <= Gb[b])  # Restrição (17)
+    @constraint(model, [t in T, ω in Ω, b in B], γ_RT[t, ω, b] <= Gb[b])  # Restrição (18)
+
+    # Resolver o modelo
+    optimize!(model)
+
+    return value.(g), value(expected_cost)
+end
 
 function DispachLinear(λ)
     # Definir o modelo de otimização
@@ -68,7 +170,7 @@ function DispachLinear(λ)
     @variable(model, β_up[t in T, i in G, b in B, l in L])
     @variable(model, β_dn[t in T, i in G, b in B, l in L])
 
-    @variable(model, Φ_g[t in T, i in G, b in B, l in L] >= 0)  # Variável Φ^{(g)}
+    @variable(model, Φ_g[t in T, i in G, b in B, l in L] >= 0)   # Variável Φ^{(g)}
     @variable(model, Φ_up[t in T, i in G, b in B, l in L] >= 0)  # Variável Φ^{(up)}
     @variable(model, Φ_dn[t in T, i in G, b in B, l in L] >= 0)  # Variável Φ^{(dn)}
 
@@ -267,8 +369,8 @@ function lift_demand(d, max_d, min_d, R, B, Ω)
 
     Z = uniform_intervals(R, min_d, max_d)
 
-    d_lift = zeros(T[end], NΩ, B[end], R);
-    for b in B, ω in Ω
+    d_lift = zeros(T[end], NΩ, length(B), R);
+    for b in 1:length(B), ω in Ω
         d_lift[:, ω, b, :] = create_lifted_variable(d[:, ω, b], Z)
     end
     return d_lift
@@ -276,10 +378,13 @@ end
 
 
 path_data = pwd() * "/data/"
-experiment = "Dataset - 3bus system/"
-# experiment = "Dataset - 300 bus system"
+# experiment = "Dataset - 3bus system/"
+experiment = "Dataset - 300 bus system/"
 
+# branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, "Dataset - 3bus system/");
 branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, experiment);
+
+df_season = CSV.read(path_data*"typical_day_SE_fall.csv", DataFrame)
 
 # Sets and indexes
 Lines   = collect(axes(branch, 1))
@@ -288,17 +393,21 @@ L_plus  = [findall(x -> x == b, branch.From_Bus) for b in B]
 L_minus = [findall(x -> x == b, branch.To_Bus) for b in B]
 b_plus  = [[j] for j in branch.From_Bus]
 b_minus = [[j] for j in branch.To_Bus]
-G       = bus.Gen_id
-Ub      = [findall(x -> x == b, gen.Gen_Bus) for b in B]
+G       = gen.Gen_id#bus.Gen_id[bus.Gen_id.!=0]#
+Ub = [[] for b in 1:maximum(B)]
+for b in B
+    Ub[b] = findall(x -> x == b, gen.Gen_bus)
+end
 nL      = simulation.L[1]
 L       = collect(1:nL)
 T       = collect(1:simulation.T[1])
-NΩ      = simulation.S[1]
+NΩ      = 20#simulation.S[1]
 Ω       = collect(1:NΩ)
-Load    = bus.Load_id
+
+Load = [i == 0 ? 0 : 1 for i in bus.Load_id]
 
 # Parameters
-d0    = simulation.d0[1]
+d0    = initial_demand.Initial_demand
 c_g   = gen.Energy_Cost
 c_up  = gen.Up_reserve_cost
 c_dn  = gen.Dn_reserve_cost
@@ -313,18 +422,25 @@ RD_dn = gen.Ramp_Limit
 RD_up = gen.Ramp_Limit
 R_dn  = gen.Max_gen
 R_up  = gen.Max_gen
-Gb    = [sum(G_max[g] for g in Ub[b]) for b in B]
+Gb = zeros(maximum(B))
+for b in B
+    println(b)
+    if !isempty(Ub[b])
+        Gb[b] = sum(G_max[g] for g in Ub[b]) 
+    end
+end
 
-d, d̂ = get_demand_3buses(20)
-
-plot(d̂[:, 1, 3])
-plot(d[:, 1, 3])
+# d, d̂ = get_demand_buses(20, initial_demand)
+d_simu, d̂_simu = simulate_demand(df_season, NΩ, 1000; seed = 123)
+d, d̂ = get_demand_bus(d_simu, d̂_simu, B, d0)
 
 max_d = maximum(d)
 min_d = minimum(d)
 
+R = 5
 d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
 d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
+g_opt_pi, cost_opt_pi = DispachPerfectInformation();
 g_opt, cost_opt = DispachLinear(0);
 g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(0);
