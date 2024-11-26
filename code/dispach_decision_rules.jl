@@ -1,25 +1,25 @@
 using JuMP, Gurobi, CSV, DataFrames
 using Plots,  Random, Distributions, StateSpaceModels
 
-function get_demand_buses(ϕ0, d0)
-    d = zeros(T[end]+1, NΩ, length(B))
-    d̂ = zeros(T[end]+1, NΩ, length(B))
+# function get_demand_buses(ϕ0, d0)
+#     d = zeros(T[end]+1, NΩ, length(B))
+#     d̂ = zeros(T[end]+1, NΩ, length(B))
     
-    d[1, :, :] .= d0
-    d̂[1, :, :] .= d0
+#     d[1, :, :] .= d0
+#     d̂[1, :, :] .= d0
 
-    Random.seed!(1234)
-    ϵ = rand(Normal(0, 3), (T[end]+1, NΩ, B[end]))
-    ϕ = simulation.phi_1
-    for t in T
-        d[t+1, :, :] .= (ϕ0 .+ ϕ.*d[t,:,:] .+ ϵ[t+1, :, :]) .* Load'
-        d̂[t+1,:,:]   .= (ϕ0 .+ ϕ.*d[t,:,:]) .* Load'
-    end
+#     Random.seed!(1234)
+#     ϵ = rand(Normal(0, 3), (T[end]+1, NΩ, B[end]))
+#     ϕ = simulation.phi_1
+#     for t in T
+#         d[t+1, :, :] .= (ϕ0 .+ ϕ.*d[t,:,:] .+ ϵ[t+1, :, :]) .* Load'
+#         d̂[t+1,:,:]   .= (ϕ0 .+ ϕ.*d[t,:,:]) .* Load'
+#     end
 
-    d = d[2:end,:,:]
-    d̂ = d̂[2:end,:,:]
-    return d, d̂
-end
+#     d = d[2:end,:,:]
+#     d̂ = d̂[2:end,:,:]
+#     return d, d̂
+# end
 
 function simulate_demand(df_season, NΩ, σ; seed = 123)
     T = size(df_season, 1)
@@ -70,7 +70,7 @@ end
 function DispachPerfectInformation()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-
+    set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -136,6 +136,7 @@ function DispachPerfectInformation()
 
     # Resolver o modelo
     optimize!(model)
+    println(termination_status(model))
 
     return value.(g), value(expected_cost)
 end
@@ -143,7 +144,7 @@ end
 function DispachLinear(λ)
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-
+    set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -272,7 +273,7 @@ end
 function DispachPiecewiseLinear(λ)
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-
+    set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -388,15 +389,17 @@ df_season = CSV.read(path_data*"typical_day_SE_fall.csv", DataFrame)
 
 # Sets and indexes
 Lines   = collect(axes(branch, 1))
-B       = bus.Bus_id
-L_plus  = [findall(x -> x == b, branch.From_Bus) for b in B]
-L_minus = [findall(x -> x == b, branch.To_Bus) for b in B]
-b_plus  = [[j] for j in branch.From_Bus]
-b_minus = [[j] for j in branch.To_Bus]
+B       = collect(1:length(bus.Bus_id))
+conv   = Dict(enumerate(bus.Bus_id))
+conv_i = Dict([(el, i) for (i, el) in enumerate(bus.Bus_id)])
+L_plus  = [findall(x -> x == conv[b], branch.From_Bus) for b in B]
+L_minus = [findall(x -> x == conv[b], branch.To_Bus) for b in B]
+b_plus  = [[conv_i[j]] for j in branch.From_Bus]
+b_minus = [[conv_i[j]] for j in branch.To_Bus]
 G       = gen.Gen_id#bus.Gen_id[bus.Gen_id.!=0]#
 Ub = [[] for b in 1:maximum(B)]
 for b in B
-    Ub[b] = findall(x -> x == b, gen.Gen_bus)
+    Ub[b] = findall(x -> x == conv[b], gen.Gen_bus)
 end
 nL      = simulation.L[1]
 L       = collect(1:nL)
@@ -441,6 +444,6 @@ R = 5
 d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
 d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
-g_opt_pi, cost_opt_pi = DispachPerfectInformation();
-g_opt, cost_opt = DispachLinear(0);
+g_opt_pi, cost_opt_pi   = DispachPerfectInformation();
+g_opt, cost_opt         = DispachLinear(0);
 g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(0);
