@@ -66,7 +66,6 @@ function get_data(path_data, experiment)
     return branch, bus, demand, gen, simulation, initial_demand
 end
 
-
 function DispachPerfectInformation()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
@@ -144,7 +143,7 @@ end
 function DispachLinear(λ)
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    set_silent(model)
+    #set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -377,7 +376,6 @@ function lift_demand(d, max_d, min_d, R, B, Ω)
     return d_lift
 end
 
-
 path_data = pwd() * "/data/"
 # experiment = "Dataset - 3bus system/"
 experiment = "Dataset - 300 bus system/"
@@ -444,6 +442,6 @@ R = 5
 d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
 d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
-g_opt_pi, cost_opt_pi   = DispachPerfectInformation();
-g_opt, cost_opt         = DispachLinear(0);
-g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(0);
+t_pi     = @elapsed g_opt_pi, cost_opt_pi   = DispachPerfectInformation();
+t_ldr    = @elapsed g_opt, cost_opt         = DispachLinear(1700);
+t_pi_ldr = @elapsed g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(1700);
