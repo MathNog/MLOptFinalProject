@@ -1,5 +1,28 @@
 using JuMP, Gurobi, CSV, DataFrames
-using Plots,  Random, Distributions, StateSpaceModels
+using Plots,  Random, Distributions
+
+mutable struct Results
+    cost::Float64
+    penalty::Float64
+    g::Array
+    r_up::Array
+    r_dn::Array
+    γ::Array
+    γ::Array
+    δ_RT::Array
+    δ_RT::Array
+    Δ::Array
+    execution_time::Float64
+end
+
+mutable struct Coeficients
+    β0_g::Array
+    β0_up::Array
+    β0_dn::Array
+    β_g::Array
+    β_up::Array
+    β_dn::Array
+end
 
 # function get_demand_buses(ϕ0, d0)
 #     d = zeros(T[end]+1, NΩ, length(B))
@@ -69,7 +92,7 @@ end
 function DispachPerfectInformation()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    set_silent(model)
+    ##set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -135,15 +158,15 @@ function DispachPerfectInformation()
 
     # Resolver o modelo
     optimize!(model)
-    println(termination_status(model))
 
-    return value.(g), value(expected_cost)
+    return value.(g), value(expected_cost), 0., termination_status(model)
 end
 
 function DispachLinear(λ)
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    #set_silent(model)
+    ##set_silent(model)
+
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -175,13 +198,13 @@ function DispachLinear(λ)
     @variable(model, Φ_dn[t in T, i in G, b in B, l in L] >= 0)  # Variável Φ^{(dn)}
 
     # Função objetivo
+    @expression(model, penalty, λ * sum(Φ_g[t, i, b, l] + Φ_up[t, i, b, l] + Φ_dn[t, i, b, l] for l in L, b in B, i in G, t in T))
     @expression(model, expected_cost, sum(p[ω] *
                                         sum(sum(c_g[i] * g[t, ω, i] + c_up[i] * r_up[t, ω, i] + c_dn[i] * r_dn[t, ω, i] for i in G) +
                                             sum(c_δ[b] * (δ[t, ω, b] + δ_RT[t, ω, b]) + c_γ[b] * (γ[t, ω, b] + γ_RT[t, ω, b]) for b in B)
                                             for t in T) 
                                         for ω in Ω))
-    @objective(model, Min, expected_cost + 
-                            λ * sum(Φ_g[t, i, b, l] + Φ_up[t, i, b, l] + Φ_dn[t, i, b, l] for l in L, b in B, i in G, t in T))
+    @objective(model, Min, expected_cost + penalty)
 
     # Restrição (2)
     @constraint(model, Rest2[ω in Ω, t in T, b in B], sum(g[t, ω, i] for i in Ub[b]) + sum(f[t, ω, j] for j in L_plus[b]) - sum(f[t, ω, j] for j in L_minus[b]) +
@@ -233,7 +256,7 @@ function DispachLinear(λ)
     # Resolver o modelo
     optimize!(model)
 
-    return value.(g), value(expected_cost)
+    return value.(g), value(expected_cost), value(penalty), termination_status(model)
 end
 
 function create_lifted_variable(x::Vector{Float64}, Z::Vector{Float64})
@@ -272,7 +295,7 @@ end
 function DispachPiecewiseLinear(λ)
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    set_silent(model)
+    ##set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -304,13 +327,13 @@ function DispachPiecewiseLinear(λ)
     @variable(model, Φ_dn[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(dn)}
 
     # Função objetivo
+    @expression(model, penalty, λ * sum(Φ_g[t, i, b, l, r] + Φ_up[t, i, b, l, r] + Φ_dn[t, i, b, l, r] for l in L, b in B, i in G, t in T, r in 1:R))
     @expression(model, expected_cost, sum(p[ω] *
                                         sum(sum(c_g[i] * g[t, ω, i] + c_up[i] * r_up[t, ω, i] + c_dn[i] * r_dn[t, ω, i] for i in G) +
                                             sum(c_δ[b] * (δ[t, ω, b] + δ_RT[t, ω, b]) + c_γ[b] * (γ[t, ω, b] + γ_RT[t, ω, b]) for b in B)
                                             for t in T) 
                                         for ω in Ω))
-    @objective(model, Min, expected_cost + 
-                            λ * sum(Φ_g[t, i, b, l, r] + Φ_up[t, i, b, l, r] + Φ_dn[t, i, b, l, r] for l in L, b in B, i in G, t in T, r in 1:R))
+    @objective(model, Min, expected_cost + penalty)
 
     # Restrição (2)
     @constraint(model, Rest2[ω in Ω, t in T, b in B], sum(g[t, ω, i] for i in Ub[b]) + sum(f[t, ω, j] for j in L_plus[b]) - sum(f[t, ω, j] for j in L_minus[b]) +
@@ -362,7 +385,7 @@ function DispachPiecewiseLinear(λ)
     # Resolver o modelo
     optimize!(model)
 
-    return value.(g), value(expected_cost)
+    return value.(g), value(expected_cost), value(penalty), termination_status(model)
 end
 
 function lift_demand(d, max_d, min_d, R, B, Ω)
@@ -442,6 +465,87 @@ R = 5
 d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
 d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
-t_pi     = @elapsed g_opt_pi, cost_opt_pi   = DispachPerfectInformation();
-t_ldr    = @elapsed g_opt, cost_opt         = DispachLinear(1700);
-t_pi_ldr = @elapsed g_opt_pwl, cost_opt_pwl = DispachPiecewiseLinear(1700);
+results = Dict("time" => [],
+            "cost" => [],
+            "penalty" => [],
+            "status" => [],
+            "model" => [],
+             "lambda" => [],
+             "scenarios" => [])
+
+λ = 0
+
+t_pi = @elapsed g_opt_pi, cost_opt_pi, penalty_pi, status_pi   = DispachPerfectInformation();
+push!(results["time"], t_pi)
+push!(results["cost"], cost_opt_pi)
+push!(results["status"], status_pi)
+push!(results["penalty"], penalty_pi)
+push!(results["model"], "PI")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+t_ldr_0 = @elapsed g_opt_ldr_0, cost_opt_ldr_0, penalty_ldr_0, status_ldr_0 = DispachLinear(λ);
+push!(results["time"], t_ldr_0)
+push!(results["cost"], cost_opt_ldr_0)
+push!(results["status"], status_ldr_0)
+push!(results["penalty"], penalty_ldr_0)
+push!(results["model"], "LDR0")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+t_pwl_0 = @elapsed g_opt_pwl_0, cost_opt_pwl_0, penalty_pwl_0, status_pwl_0 = DispachPiecewiseLinear(λ);
+push!(results["time"], t_pwl_0)
+push!(results["cost"], cost_opt_pwl_0)
+push!(results["status"], status_pwl_0)
+push!(results["penalty"], penalty_pwl_0)
+push!(results["model"], "PWL")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+λ = 1
+
+t_ldr_1 = @elapsed g_opt_ldr_1, cost_opt_ldr_1, penalty_ldr_1, status_ldr_1 = DispachLinear(λ);
+push!(results["time"], t_ldr_1)
+push!(results["cost"], cost_opt_ldr_1)
+push!(results["status"], status_ldr_1)
+push!(results["penalty"], penalty_ldr_1)
+push!(results["model"], "LDR")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+t_pwl_1 = @elapsed g_opt_pwl_1, cost_opt_pwl_1, penalty_pwl_1, status_pwl_1 = DispachPiecewiseLinear(λ);
+push!(results["time"], t_pwl_1)
+push!(results["cost"], cost_opt_pwl_1)
+push!(results["status"], status_pwl_1)
+push!(results["penalty"], penalty_pwl_1)
+push!(results["model"], "PWL")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+
+λ = 1000
+
+t_ldr_1000 = @elapsed g_opt_ldr_1000, cost_opt_ldr_1000, penalty_ldr_1000, status_ldr_1000 = DispachLinear(λ);
+push!(results["time"], t_ldr_1000)
+push!(results["cost"], cost_opt_ldr_1000)
+push!(results["status"], status_ldr_1000)
+push!(results["penalty"], penalty_ldr_1000)
+push!(results["model"], "LDR")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+
+t_pwl_1000 = @elapsed g_opt_pwl_1000, cost_opt_pwl_1000, penalty_pwl_1000, status_pwl_1000 = DispachPiecewiseLinear(λ);
+push!(results["time"], t_pwl_1000)
+push!(results["cost"], cost_opt_pwl_1000)
+push!(results["status"], status_pwl_1000)
+push!(results["penalty"], penalty_pwl_1000)
+push!(results["model"], "PWL")
+push!(results["lambda"], λ)
+push!(results["scenarios"], NΩ)
+CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
