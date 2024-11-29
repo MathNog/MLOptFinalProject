@@ -1,6 +1,7 @@
 using JuMP, Gurobi, CSV, DataFrames
 using Plots,  Random, Distributions
 
+
 mutable struct Results
     cost::Float64
     penalty::Float64
@@ -8,11 +9,13 @@ mutable struct Results
     r_up::Array
     r_dn::Array
     γ::Array
-    γ::Array
-    δ_RT::Array
+    γ_RT::Array
+    δ::Array
     δ_RT::Array
     Δ::Array
-    execution_time::Float64
+    creation_time::Float64
+    optimization_time::Float64
+    termination_status
 end
 
 mutable struct Coeficients
@@ -91,6 +94,7 @@ end
 
 function DispachPerfectInformation()
     # Definir o modelo de otimização
+    t1  = time()
     model = Model(Gurobi.Optimizer)
     ##set_silent(model)
     # Índices e conjuntos
@@ -156,13 +160,19 @@ function DispachPerfectInformation()
     @constraint(model, [t in T, ω in Ω, b in B], γ[t, ω, b] <= Gb[b])  # Restrição (17)
     @constraint(model, [t in T, ω in Ω, b in B], γ_RT[t, ω, b] <= Gb[b])  # Restrição (18)
 
+    t2 = time()
     # Resolver o modelo
     optimize!(model)
+    t3 = time()
 
-    return value.(g), value(expected_cost), 0., termination_status(model)
+    return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+                    value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
+                    t2 - t1, t3 - t2, termination_status(model))
 end
 
+
 function DispachLinear(λ)
+    t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
     ##set_silent(model)
@@ -254,9 +264,15 @@ function DispachLinear(λ)
     @constraint(model, [t in T, i in G, b in B, l in L], Φ_dn[t, i, b, l] + β_dn[t, i, b, l] >= 0)  # Restrição (29)
 
     # Resolver o modelo
+    t2 = time()
+    # Resolver o modelo
     optimize!(model)
+    t3 = time()
 
-    return value.(g), value(expected_cost), value(penalty), termination_status(model)
+    return return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+                            value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
+                            t2 - t1, t3 - t2, termination_status(model)),
+                    Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
 end
 
 function create_lifted_variable(x::Vector{Float64}, Z::Vector{Float64})
@@ -293,6 +309,7 @@ function uniform_intervals(R, A, B)
 end
 
 function DispachPiecewiseLinear(λ)
+    t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
     ##set_silent(model)
@@ -383,14 +400,20 @@ function DispachPiecewiseLinear(λ)
     @constraint(model, [t in T, i in G, b in B, l in L, r in 1:R], Φ_dn[t, i, b, l, r] + β_dn[t, i, b, l, r] >= 0)  # Restrição (29)
 
     # Resolver o modelo
+    t2 = time()
+    # Resolver o modelo
     optimize!(model)
+    t3 = time()
 
-    return value.(g), value(expected_cost), value(penalty), termination_status(model)
+    return return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+                            value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
+                            t2 - t1, t3 - t2, termination_status(model)) ,
+                    Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
 end
 
-function lift_demand(d, max_d, min_d, R, B, Ω)
+function lift_demand(d, R, B, Ω, Z)
 
-    Z = uniform_intervals(R, min_d, max_d)
+    Z = uniform_intervals(5, min_d, max_d)
 
     d_lift = zeros(T[end], NΩ, length(B), R);
     for b in 1:length(B), ω in Ω
@@ -399,14 +422,52 @@ function lift_demand(d, max_d, min_d, R, B, Ω)
     return d_lift
 end
 
+
+function scale_demand(d_simu, initial_demand)
+    
+    min_val = minimum(d_simu)
+    max_val = maximum(d_simu)
+    max_orig = maximum(initial_demand.Initial_demand)
+    min_orig = minimum(initial_demand.Initial_demand)
+
+    return (d_simu .- min_val) ./ (max_val - min_val) .* (max_orig - min_orig) .+ min_orig
+end
+
+function compute_metrics(results::Results)
+
+    g    = mean(sum(results.g[t, :, i] for t in 1:24, i in 1:length(G)))
+    r_up = mean(sum(results.r_up[t, :, i] for t in 1:24, i in 1:length(G)))
+    r_dn = mean(sum(results.r_dn[t, :, i] for t in 1:24, i in 1:length(G)))
+    γ    = mean(sum(results.γ[t, :, b] for t in 1:24, b in 1:length(B)))
+    γ_RT = mean(sum(results.γ_RT[t, :, b] for t in 1:24, b in 1:length(B)))
+    δ    = mean(sum(results.δ[t, :, b] for t in 1:24, b in 1:length(B)))
+    δ_RT = mean(sum(results.δ_RT[t, :, b] for t in 1:24, b in 1:length(B)))
+    Δ    = mean(sum(results.Δ[t, :, i] for t in 1:24, i in 1:length(G)))
+    
+    return Dict("g" => g, "r_up" => r_up, "r_dn" => r_dn , "γ" => γ, "γ_RT" => γ_RT, "δ"=> δ, "δ_RT" => δ_RT, "Δ" => Δ)
+end
+
+function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
+    # theme(:ggplot)
+    y_pi_mean  = vec(mean(sum(y_pi[:, :, i] for i in 1:size(y_pi, 3)), dims = 2))
+    y_ldr_mean = vec(mean(sum(y_ldr[:, :, i] for i in 1:size(y_ldr, 3)), dims = 2))
+    y_pwl_mean = vec(mean(sum(y_pwl[:, :, i] for i in 1:size(y_pwl, 3)), dims = 2))
+    plot(1:T, y_pi_mean, label = "PI", linewidth = 2.0)
+    plot!(1:T, y_ldr_mean, label = "LDR", linewidth = 2.0)
+    plot!(1:T, y_pwl_mean, label = "PWL", linewidth = 2.0)
+    title!(title)
+    xlabel!("Hours")
+    ylabel!(ylabel)
+end
+
 path_data = pwd() * "/data/"
-# experiment = "Dataset - 3bus system/"
 experiment = "Dataset - 300 bus system/"
 
-# branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, "Dataset - 3bus system/");
 branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, experiment);
 
 df_season = CSV.read(path_data*"typical_day_SE_fall.csv", DataFrame)
+
+plot(df_season[:, "val_cargaenergiahomwmed_mean"])
 
 # Sets and indexes
 Lines   = collect(axes(branch, 1))
@@ -417,7 +478,7 @@ L_plus  = [findall(x -> x == conv[b], branch.From_Bus) for b in B]
 L_minus = [findall(x -> x == conv[b], branch.To_Bus) for b in B]
 b_plus  = [[conv_i[j]] for j in branch.From_Bus]
 b_minus = [[conv_i[j]] for j in branch.To_Bus]
-G       = gen.Gen_id#bus.Gen_id[bus.Gen_id.!=0]#
+G       = gen.Gen_id
 Ub = [[] for b in 1:maximum(B)]
 for b in B
     Ub[b] = findall(x -> x == conv[b], gen.Gen_bus)
@@ -437,7 +498,7 @@ c_up  = gen.Up_reserve_cost
 c_dn  = gen.Dn_reserve_cost
 G_max = gen.Max_gen
 G_min = gen.Min_gen
-c_δ   = ones(length(B))*(1.1*maximum(c_g))
+c_δ   = ones(length(B))*(2.1*maximum(c_g))
 c_γ   = ones(length(B))*(0.1*maximum(c_g))
 F     = branch.Transmission_Capacity 
 x     = branch.Reactance
@@ -454,9 +515,17 @@ for b in B
     end
 end
 
-# d, d̂ = get_demand_buses(20, initial_demand)
-d_simu, d̂_simu = simulate_demand(df_season, NΩ, 1000; seed = 123)
+std_error = mean(df_season.val_cargaenergiahomwmed_std)
+d_simu, d̂_simu = simulate_demand(df_season, NΩ, std_error; seed = 123)
+
+d_simu = scale_demand(d_simu, initial_demand)
+d̂_simu = scale_demand(d_simu, initial_demand)
 d, d̂ = get_demand_bus(d_simu, d̂_simu, B, d0)
+
+# plot(vec(mean(d[:, :, 1], dims=2)))
+
+# d_min, idx_min = findmin(df_season[:, "val_cargaenergiahomwmed_mean"])
+# d_max, idx_max = findmax(df_season[:, "val_cargaenergiahomwmed_mean"])
 
 max_d = maximum(d)
 min_d = minimum(d)
@@ -465,87 +534,14 @@ R = 5
 d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
 d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
 
-results = Dict("time" => [],
-            "cost" => [],
-            "penalty" => [],
-            "status" => [],
-            "model" => [],
-             "lambda" => [],
-             "scenarios" => [])
-
 λ = 0
 
-t_pi = @elapsed g_opt_pi, cost_opt_pi, penalty_pi, status_pi   = DispachPerfectInformation();
-push!(results["time"], t_pi)
-push!(results["cost"], cost_opt_pi)
-push!(results["status"], status_pi)
-push!(results["penalty"], penalty_pi)
-push!(results["model"], "PI")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+results_pi             = DispachPerfectInformation();
+results_ldr, coefs_ldr = DispachLinear(λ);
+results_pwl, coefs_pwl =  DispachPiecewiseLinear(λ);
 
-t_ldr_0 = @elapsed g_opt_ldr_0, cost_opt_ldr_0, penalty_ldr_0, status_ldr_0 = DispachLinear(λ);
-push!(results["time"], t_ldr_0)
-push!(results["cost"], cost_opt_ldr_0)
-push!(results["status"], status_ldr_0)
-push!(results["penalty"], penalty_ldr_0)
-push!(results["model"], "LDR0")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+metrics_pi_train  = compute_metrics(results_pi)
+metrics_ldr_train = compute_metrics(results_ldr)
+metrics_pwl_train = compute_metrics(results_pwl)
 
-t_pwl_0 = @elapsed g_opt_pwl_0, cost_opt_pwl_0, penalty_pwl_0, status_pwl_0 = DispachPiecewiseLinear(λ);
-push!(results["time"], t_pwl_0)
-push!(results["cost"], cost_opt_pwl_0)
-push!(results["status"], status_pwl_0)
-push!(results["penalty"], penalty_pwl_0)
-push!(results["model"], "PWL")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
-
-λ = 1
-
-t_ldr_1 = @elapsed g_opt_ldr_1, cost_opt_ldr_1, penalty_ldr_1, status_ldr_1 = DispachLinear(λ);
-push!(results["time"], t_ldr_1)
-push!(results["cost"], cost_opt_ldr_1)
-push!(results["status"], status_ldr_1)
-push!(results["penalty"], penalty_ldr_1)
-push!(results["model"], "LDR")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
-
-t_pwl_1 = @elapsed g_opt_pwl_1, cost_opt_pwl_1, penalty_pwl_1, status_pwl_1 = DispachPiecewiseLinear(λ);
-push!(results["time"], t_pwl_1)
-push!(results["cost"], cost_opt_pwl_1)
-push!(results["status"], status_pwl_1)
-push!(results["penalty"], penalty_pwl_1)
-push!(results["model"], "PWL")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
-
-
-λ = 1000
-
-t_ldr_1000 = @elapsed g_opt_ldr_1000, cost_opt_ldr_1000, penalty_ldr_1000, status_ldr_1000 = DispachLinear(λ);
-push!(results["time"], t_ldr_1000)
-push!(results["cost"], cost_opt_ldr_1000)
-push!(results["status"], status_ldr_1000)
-push!(results["penalty"], penalty_ldr_1000)
-push!(results["model"], "LDR")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
-
-t_pwl_1000 = @elapsed g_opt_pwl_1000, cost_opt_pwl_1000, penalty_pwl_1000, status_pwl_1000 = DispachPiecewiseLinear(λ);
-push!(results["time"], t_pwl_1000)
-push!(results["cost"], cost_opt_pwl_1000)
-push!(results["status"], status_pwl_1000)
-push!(results["penalty"], penalty_pwl_1000)
-push!(results["model"], "PWL")
-push!(results["lambda"], λ)
-push!(results["scenarios"], NΩ)
-CSV.write("results/results_$(NΩ)_scenarios.csv",DataFrame(results))
+plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "title", "label")
