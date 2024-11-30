@@ -411,7 +411,7 @@ function DispachPiecewiseLinear(λ)
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
 end
 
-function lift_demand(d, R, B, Ω, Z)
+function lift_demand(d,  max_d, min_d, R, B, Ω)
 
     Z = uniform_intervals(5, min_d, max_d)
 
@@ -461,6 +461,7 @@ function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
 end
 
 path_data = pwd() * "/data/"
+path_results = pwd()*"/results/"
 experiment = "Dataset - 300 bus system/"
 
 branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, experiment);
@@ -540,8 +541,13 @@ results_pi             = DispachPerfectInformation();
 results_ldr, coefs_ldr = DispachLinear(λ);
 results_pwl, coefs_pwl =  DispachPiecewiseLinear(λ);
 
-metrics_pi_train  = compute_metrics(results_pi)
-metrics_ldr_train = compute_metrics(results_ldr)
-metrics_pwl_train = compute_metrics(results_pwl)
+metrics_pi_train  = round.(DataFrame(compute_metrics(results_pi)), digits = 3)
+CSV.write(path_results*"results_pi_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_train)
+
+metrics_ldr_train = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
+CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_train)
+
+metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
+CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
 
 plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "title", "label")
