@@ -92,7 +92,7 @@ function get_data(path_data, experiment)
     return branch, bus, demand, gen, simulation, initial_demand
 end
 
-function DispachPerfectInformation()
+function DispachPerfectInformation(d,d̂)
     # Definir o modelo de otimização
     t1  = time()
     model = Model(Gurobi.Optimizer)
@@ -171,7 +171,8 @@ function DispachPerfectInformation()
 end
 
 
-function DispachLinear(λ)
+function DispachLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
+                            fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
     t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
@@ -196,12 +197,24 @@ function DispachLinear(λ)
 
     @variable(model, Δ[t in T, ω in Ω, i in G])
 
-    @variable(model, β0_g[t in T, i in G])
-    @variable(model, β0_up[t in T, i in G])
-    @variable(model, β0_dn[t in T, i in G])
-    @variable(model, β_g[t in T, i in G, b in B, l in L])
-    @variable(model, β_up[t in T, i in G, b in B, l in L])
-    @variable(model, β_dn[t in T, i in G, b in B, l in L])
+    if ismissing(fixed_β0_g)
+        @variable(model, β0_g[t in T, i in G])
+        @variable(model, β0_up[t in T, i in G])
+        @variable(model, β0_dn[t in T, i in G])
+        @variable(model, β_g[t in T, i in G, b in B, l in L])
+        @variable(model, β_up[t in T, i in G, b in B, l in L])
+        @variable(model, β_dn[t in T, i in G, b in B, l in L])
+
+    else
+        println("fixando variaveis...")
+        β0_g  = fixed_β0_g
+        β0_up =  fixed_β0_up
+        β0_dn = fixed_β0_dn
+
+        β_g = fixed_β_g
+        β_up = fixed_β_up
+        β_dn =  fixed_β_dn
+    end
 
     @variable(model, Φ_g[t in T, i in G, b in B, l in L] >= 0)   # Variável Φ^{(g)}
     @variable(model, Φ_up[t in T, i in G, b in B, l in L] >= 0)  # Variável Φ^{(up)}
@@ -268,11 +281,18 @@ function DispachLinear(λ)
     # Resolver o modelo
     optimize!(model)
     t3 = time()
-
-    return return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+    if ismissing(fixed_β0_dn)
+        return  Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)),
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
+    else
+        return  Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+                            value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
+                            t2 - t1, t3 - t2, termination_status(model)),
+                            Coeficients(β0_g, β0_up, β0_dn, β_g, β_up, β_dn)
+    end
+
 end
 
 function create_lifted_variable(x::Vector{Float64}, Z::Vector{Float64})
@@ -308,7 +328,8 @@ function uniform_intervals(R, A, B)
     return upper_limits
 end
 
-function DispachPiecewiseLinear(λ)
+function DispachPiecewiseLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
+                                    fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
     t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
@@ -339,6 +360,15 @@ function DispachPiecewiseLinear(λ)
     @variable(model, β_up[t in T, i in G, b in B, l in L, r in 1:R])
     @variable(model, β_dn[t in T, i in G, b in B, l in L, r in 1:R])
 
+    if !ismissing(fixed_β0_g)
+        fix.(model[:β0_g], fixed_β0_g; force = true)
+        fix.(model[:β0_up], fixed_β0_up; force = true)
+        fix.(model[:β0_dn], fixed_β0_dn; force = true)
+
+        fix.(model[:β_g], fixed_β_g; force = true)
+        fix.(model[:β_up], fixed_β_up; force = true)
+        fix.(model[:β_dn],fixed_β_dn; force = true)
+    end
     @variable(model, Φ_g[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(g)}
     @variable(model, Φ_up[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(up)}
     @variable(model, Φ_dn[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(dn)}
@@ -411,17 +441,16 @@ function DispachPiecewiseLinear(λ)
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
 end
 
-function lift_demand(d,  max_d, min_d, R, B, Ω)
+function lift_demand(d,  max_d, min_d, R)
 
-    Z = uniform_intervals(5, min_d, max_d)
-
-    d_lift = zeros(T[end], NΩ, length(B), R);
-    for b in 1:length(B), ω in Ω
-        d_lift[:, ω, b, :] = create_lifted_variable(d[:, ω, b], Z)
+    Z = uniform_intervals(R, min_d, max_d)
+    #println(Z)
+    d_lift = zeros(T[end], NΩ, R);
+    for ω in Ω
+        d_lift[:, ω, :] = create_lifted_variable(d[:, ω], Z)
     end
     return d_lift
 end
-
 
 function scale_demand(d_simu, initial_demand)
     
@@ -520,7 +549,7 @@ std_error = mean(df_season.val_cargaenergiahomwmed_std)
 d_simu, d̂_simu = simulate_demand(df_season, NΩ, std_error; seed = 123)
 
 d_simu = scale_demand(d_simu, initial_demand)
-d̂_simu = scale_demand(d_simu, initial_demand)
+d̂_simu = scale_demand(d̂_simu, initial_demand)
 d, d̂ = get_demand_bus(d_simu, d̂_simu, B, d0)
 
 # plot(vec(mean(d[:, :, 1], dims=2)))
@@ -528,26 +557,71 @@ d, d̂ = get_demand_bus(d_simu, d̂_simu, B, d0)
 # d_min, idx_min = findmin(df_season[:, "val_cargaenergiahomwmed_mean"])
 # d_max, idx_max = findmax(df_season[:, "val_cargaenergiahomwmed_mean"])
 
-max_d = maximum(d)
-min_d = minimum(d)
+d_lift = zeros(24, 20, 300, R)
+d̂_lift = zeros(24, 20, 300, R)
 
-R = 5
-d_lift = lift_demand(d, max_d, min_d, R, B, Ω)
-d̂_lift = lift_demand(d̂, max_d, min_d, R, B, Ω)
+for b in B
+    max_d = maximum(d[:, :, b])
+    min_d = minimum(d[:, :, b])
+
+    R = 5
+    d_lift[:, :, b, :] = lift_demand(d[:, :, b], max_d, min_d, R)
+    d̂_lift[:, :, b, :] = lift_demand(d̂[:, :, b], max_d, min_d, R)
+end
 
 λ = 0
 
+d_lift[:, 1,1, :]
+
 results_pi             = DispachPerfectInformation();
 results_ldr, coefs_ldr = DispachLinear(λ);
-results_pwl, coefs_pwl =  DispachPiecewiseLinear(λ);
+results_pwl, coefs_pwl = DispachPiecewiseLinear(λ);
+
+# Simulando novos cenarios
+d_simu_new, d̂_simu_new = simulate_demand(df_season, NΩ, std_error; seed = 456)
+
+d_simu_new = scale_demand(d_simu, initial_demand)
+d̂_simu_new = scale_demand(d̂_simu, initial_demand)
+d_new, d̂_new = get_demand_bus(d_simu, d̂_simu, B, d0)
+
+d_lift_new = zeros(24, 20, 300, R)
+d̂_lift_new = zeros(24, 20, 300, R)
+
+for b in B
+    max_d = maximum(d_new[:, :, b])
+    min_d = minimum(d_new[:, :, b])
+
+    R = 5
+    d_lift_new[:, :, b, :] = lift_demand(d_new[:, :, b], max_d, min_d, R)
+    d̂_lift_new[:, :, b, :] = lift_demand(d̂_new[:, :, b], max_d, min_d, R)
+end
+
+results_pi_out             = DispachPerfectInformation();
+results_ldr_out, coefs_ldr = DispachLinear(λ,d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
+                                            fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
+                                            fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
+
+results_pwl_out, coefs_pwl = DispachPiecewiseLinear(λ; fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
+                                                        fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
+                                                        fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
+
+
 
 metrics_pi_train  = round.(DataFrame(compute_metrics(results_pi)), digits = 3)
 CSV.write(path_results*"results_pi_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_train)
 
 metrics_ldr_train = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
+#metrics_ldr_train2 = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
+
 CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_train)
 
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
 
 plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "title", "label")
+
+value.()
+
+results_pi.cost
+results_ldr.cost
+results_pwl.cost
