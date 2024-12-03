@@ -2,6 +2,7 @@ using JuMP, Gurobi, CSV, DataFrames
 using Plots,  Random, Distributions
 
 
+
 mutable struct Results
     cost::Float64
     penalty::Float64
@@ -47,7 +48,7 @@ end
 #     return d, d̂
 # end
 
-function simulate_demand(df_season, NΩ, σ; seed = 123)
+function simulate_demand(df_season, NΩ, σ, seed)
     T = size(df_season, 1)
     d̂ = zeros(T, NΩ)
     Random.seed!(seed)
@@ -171,7 +172,7 @@ function DispachPerfectInformation(d,d̂)
 end
 
 
-function DispachLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
+function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
                             fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
     t1 = time()
     # Definir o modelo de otimização
@@ -206,7 +207,6 @@ function DispachLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing,
         @variable(model, β_dn[t in T, i in G, b in B, l in L])
 
     else
-        println("fixando variaveis...")
         β0_g  = fixed_β0_g
         β0_up =  fixed_β0_up
         β0_dn = fixed_β0_dn
@@ -282,12 +282,12 @@ function DispachLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing,
     optimize!(model)
     t3 = time()
     if ismissing(fixed_β0_dn)
-        return  Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+        return  Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)),
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
     else
-        return  Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+        return  Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)),
                             Coeficients(β0_g, β0_up, β0_dn, β_g, β_up, β_dn)
@@ -328,7 +328,7 @@ function uniform_intervals(R, A, B)
     return upper_limits
 end
 
-function DispachPiecewiseLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
+function DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
                                     fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
     t1 = time()
     # Definir o modelo de otimização
@@ -353,34 +353,60 @@ function DispachPiecewiseLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up =
 
     @variable(model, Δ[t in T, ω in Ω, i in G])
 
-    @variable(model, β0_g[t in T, i in G])
-    @variable(model, β0_up[t in T, i in G])
-    @variable(model, β0_dn[t in T, i in G])
-    @variable(model, β_g[t in T, i in G, b in B, l in L, r in 1:R])
-    @variable(model, β_up[t in T, i in G, b in B, l in L, r in 1:R])
-    @variable(model, β_dn[t in T, i in G, b in B, l in L, r in 1:R])
+    # @variable(model, β0_g[t in T, i in G])
+    # @variable(model, β0_up[t in T, i in G])
+    # @variable(model, β0_dn[t in T, i in G])
+    # @variable(model, β_g[t in T, i in G, b in B, l in L, r in 1:R])
+    # @variable(model, β_up[t in T, i in G, b in B, l in L, r in 1:R])
+    # @variable(model, β_dn[t in T, i in G, b in B, l in L, r in 1:R])
 
-    if !ismissing(fixed_β0_g)
-        fix.(model[:β0_g], fixed_β0_g; force = true)
-        fix.(model[:β0_up], fixed_β0_up; force = true)
-        fix.(model[:β0_dn], fixed_β0_dn; force = true)
+    # if !ismissing(fixed_β0_g)
+    #     fix.(model[:β0_g], fixed_β0_g; force = true)
+    #     fix.(model[:β0_up], fixed_β0_up; force = true)
+    #     fix.(model[:β0_dn], fixed_β0_dn; force = true)
 
-        fix.(model[:β_g], fixed_β_g; force = true)
-        fix.(model[:β_up], fixed_β_up; force = true)
-        fix.(model[:β_dn],fixed_β_dn; force = true)
+    #     fix.(model[:β_g], fixed_β_g; force = true)
+    #     fix.(model[:β_up], fixed_β_up; force = true)
+    #     fix.(model[:β_dn], fixed_β_dn; force = true)
+    # end
+
+    @variable(model, s_g_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_g_minus[t in T, ω in Ω, i in G] >= 0)
+    @variable(model, s_rup_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_rup_minus[t in T, ω in Ω, i in G] >= 0)
+    @variable(model, s_rdn_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_rdn_minus[t in T, ω in Ω, i in G] >= 0)
+
+    if ismissing(fixed_β0_g)
+        @variable(model, β0_g[t in T, i in G])
+        @variable(model, β0_up[t in T, i in G])
+        @variable(model, β0_dn[t in T, i in G])
+        @variable(model, β_g[t in T, i in G, b in B, l in L, r in 1:R])
+        @variable(model, β_up[t in T, i in G, b in B, l in L, r in 1:R])
+        @variable(model, β_dn[t in T, i in G, b in B, l in L, r in 1:R])
+    else
+        β0_g  = fixed_β0_g
+        β0_up =  fixed_β0_up
+        β0_dn = fixed_β0_dn
+
+        β_g = fixed_β_g
+        β_up = fixed_β_up
+        β_dn =  fixed_β_dn
     end
+
     @variable(model, Φ_g[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(g)}
     @variable(model, Φ_up[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(up)}
     @variable(model, Φ_dn[t in T, i in G, b in B, l in L, r in 1:R] >= 0)  # Variável Φ^{(dn)}
 
     # Função objetivo
     @expression(model, penalty, λ * sum(Φ_g[t, i, b, l, r] + Φ_up[t, i, b, l, r] + Φ_dn[t, i, b, l, r] for l in L, b in B, i in G, t in T, r in 1:R))
+    @expression(model, slack_penalty, c_slack * (1/NΩ)*sum((s_g_plus[t, ω, i] + s_g_minus[t,ω, i] + s_rup_plus[t,ω, i] + s_rup_minus[t,ω, i] + s_rdn_plus[t,ω, i] + s_rdn_minus[t,ω, i]) for t in T, i in G, ω in Ω))
     @expression(model, expected_cost, sum(p[ω] *
                                         sum(sum(c_g[i] * g[t, ω, i] + c_up[i] * r_up[t, ω, i] + c_dn[i] * r_dn[t, ω, i] for i in G) +
                                             sum(c_δ[b] * (δ[t, ω, b] + δ_RT[t, ω, b]) + c_γ[b] * (γ[t, ω, b] + γ_RT[t, ω, b]) for b in B)
                                             for t in T) 
                                         for ω in Ω))
-    @objective(model, Min, expected_cost + penalty)
+    @objective(model, Min, expected_cost + penalty + slack_penalty)
 
     # Restrição (2)
     @constraint(model, Rest2[ω in Ω, t in T, b in B], sum(g[t, ω, i] for i in Ub[b]) + sum(f[t, ω, j] for j in L_plus[b]) - sum(f[t, ω, j] for j in L_minus[b]) +
@@ -418,9 +444,9 @@ function DispachPiecewiseLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up =
     @constraint(model, [t in T, ω in Ω, b in B], γ[t, ω, b] <= Gb[b])  # Restrição (17)
     @constraint(model, [t in T, ω in Ω, b in B], γ_RT[t, ω, b] <= Gb[b])  # Restrição (18)
 
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], g[t, ω, i] == β0_g[t, i] + sum(sum(sum(β_g[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R))  # Restrição (19)
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_up[t, ω, i] == β0_up[t, i] + sum(sum(sum(β_up[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R))  # Restrição (20)
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_dn[t, ω, i] == β0_dn[t, i] + sum(sum(sum(β_dn[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R))  # Restrição (21)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], g[t, ω, i] == β0_g[t, i] + sum(sum(sum(β_g[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R) + s_g_plus[t, ω, i] - s_g_minus[t, ω, i])  # Restrição (19)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_up[t, ω, i] == β0_up[t, i] + sum(sum(sum(β_up[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R) + s_rup_plus[t, ω, i] - s_rup_minus[t, ω, i])  # Restrição (20)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_dn[t, ω, i] == β0_dn[t, i] + sum(sum(sum(β_dn[t, i, b, l, r] * d_lift[t-l, ω, b, r] for b in B) for l in L) for r in 1:R) + s_rdn_plus[t, ω, i] - s_rdn_minus[t, ω, i])  # Restrição (21)
 
     @constraint(model, [t in T, i in G, b in B, l in L, r in 1:R], Φ_g[t, i, b, l, r] - β_g[t, i, b, l, r] >= 0)  # Restrição (24)
     @constraint(model, [t in T, i in G, b in B, l in L, r in 1:R], Φ_g[t, i, b, l, r] + β_g[t, i, b, l, r] >= 0)  # Restrição (25)
@@ -435,10 +461,17 @@ function DispachPiecewiseLinear(λ, d,d̂; fixed_β0_g = missing, fixed_β0_up =
     optimize!(model)
     t3 = time()
 
-    return return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+    if ismissing(fixed_β0_dn)
+        return Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)) ,
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
+    else
+        return Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
+                            value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
+                            t2 - t1, t3 - t2, termination_status(model)) ,
+                    Coeficients(β0_g, β0_up, β0_dn, β_g, β_up, β_dn)
+    end
 end
 
 function lift_demand(d,  max_d, min_d, R)
@@ -529,6 +562,7 @@ c_dn  = gen.Dn_reserve_cost
 G_max = gen.Max_gen
 G_min = gen.Min_gen
 c_δ   = ones(length(B))*(2.1*maximum(c_g))
+c_slack = maximum(c_δ)
 c_γ   = ones(length(B))*(0.1*maximum(c_g))
 F     = branch.Transmission_Capacity 
 x     = branch.Reactance
@@ -546,17 +580,14 @@ for b in B
 end
 
 std_error = mean(df_season.val_cargaenergiahomwmed_std)
-d_simu, d̂_simu = simulate_demand(df_season, NΩ, std_error; seed = 123)
+d_simu, d̂_simu = simulate_demand(df_season, NΩ, std_error, 123)
 
 d_simu = scale_demand(d_simu, initial_demand)
 d̂_simu = scale_demand(d̂_simu, initial_demand)
-d, d̂ = get_demand_bus(d_simu, d̂_simu, B, d0)
+d, d̂   = get_demand_bus(d_simu, d̂_simu, B, d0)
 
-# plot(vec(mean(d[:, :, 1], dims=2)))
 
-# d_min, idx_min = findmin(df_season[:, "val_cargaenergiahomwmed_mean"])
-# d_max, idx_max = findmax(df_season[:, "val_cargaenergiahomwmed_mean"])
-
+R = 5
 d_lift = zeros(24, 20, 300, R)
 d̂_lift = zeros(24, 20, 300, R)
 
@@ -571,18 +602,16 @@ end
 
 λ = 0
 
-d_lift[:, 1,1, :]
-
 results_pi             = DispachPerfectInformation();
-results_ldr, coefs_ldr = DispachLinear(λ);
-results_pwl, coefs_pwl = DispachPiecewiseLinear(λ);
+results_ldr, coefs_ldr = DispachLinear(λ, d, d̂);
+results_pwl, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
 
 # Simulando novos cenarios
-d_simu_new, d̂_simu_new = simulate_demand(df_season, NΩ, std_error; seed = 456)
+d_simu_new, d̂_simu_new = simulate_demand(df_season, NΩ, std_error, 0)
 
-d_simu_new = scale_demand(d_simu, initial_demand)
-d̂_simu_new = scale_demand(d̂_simu, initial_demand)
-d_new, d̂_new = get_demand_bus(d_simu, d̂_simu, B, d0)
+d_simu_new = scale_demand(d_simu_new, initial_demand)
+d̂_simu_new = scale_demand(d̂_simu_new, initial_demand)
+d_new, d̂_new = get_demand_bus(d_simu_new, d̂_simu_new, B, d0)
 
 d_lift_new = zeros(24, 20, 300, R)
 d̂_lift_new = zeros(24, 20, 300, R)
@@ -596,32 +625,36 @@ for b in B
     d̂_lift_new[:, :, b, :] = lift_demand(d̂_new[:, :, b], max_d, min_d, R)
 end
 
-results_pi_out             = DispachPerfectInformation();
-results_ldr_out, coefs_ldr = DispachLinear(λ,d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
+results_pi_out = DispachPerfectInformation();
+results_ldr_out, coefs_ldr_out = DispachLinear(λ,d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
                                             fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
                                             fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
 
-results_pwl_out, coefs_pwl = DispachPiecewiseLinear(λ; fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
+results_pwl_out, coefs_pwl_out = DispachPiecewiseLinear(λ, d_new, d̂_new, d_lift_new, d̂_lift_new; 
+                                                        fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
                                                         fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
                                                         fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
-
 
 
 metrics_pi_train  = round.(DataFrame(compute_metrics(results_pi)), digits = 3)
 CSV.write(path_results*"results_pi_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_train)
 
 metrics_ldr_train = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
-#metrics_ldr_train2 = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
-
 CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_train)
 
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
 
+
+metrics_pi_test  = round.(DataFrame(compute_metrics(results_pi_out)), digits = 3)
+CSV.write(path_results*"results_pi_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_test)
+
+metrics_ldr_test = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
+CSV.write(path_results*"results_ldr_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_test)
+
+metrics_pwl_test = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3)
+CSV.write(path_results*"results_pwl_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_test)
+
+
+
 plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "title", "label")
-
-value.()
-
-results_pi.cost
-results_ldr.cost
-results_pwl.cost
