@@ -2,10 +2,10 @@ using JuMP, Gurobi, CSV, DataFrames
 using Plots,  Random, Distributions
 
 
-
 mutable struct Results
     cost::Float64
     penalty::Float64
+    slack_penalty::Float64
     g::Array
     r_up::Array
     r_dn::Array
@@ -28,37 +28,6 @@ mutable struct Coeficients
     β_dn::Array
 end
 
-# function get_demand_buses(ϕ0, d0)
-#     d = zeros(T[end]+1, NΩ, length(B))
-#     d̂ = zeros(T[end]+1, NΩ, length(B))
-    
-#     d[1, :, :] .= d0
-#     d̂[1, :, :] .= d0
-
-#     Random.seed!(1234)
-#     ϵ = rand(Normal(0, 3), (T[end]+1, NΩ, B[end]))
-#     ϕ = simulation.phi_1
-#     for t in T
-#         d[t+1, :, :] .= (ϕ0 .+ ϕ.*d[t,:,:] .+ ϵ[t+1, :, :]) .* Load'
-#         d̂[t+1,:,:]   .= (ϕ0 .+ ϕ.*d[t,:,:]) .* Load'
-#     end
-
-#     d = d[2:end,:,:]
-#     d̂ = d̂[2:end,:,:]
-#     return d, d̂
-# end
-
-function simulate_demand(df_season, NΩ, σ, seed)
-    T = size(df_season, 1)
-    d̂ = zeros(T, NΩ)
-    Random.seed!(seed)
-    for t in 1:T
-        d̂[t, :]  = rand(Normal.(df_season[t, 2], df_season[t, 3]),NΩ)
-    end
-
-    d = deepcopy(d̂) .+ rand(Normal(0, σ), T, NΩ)
-    return d, d̂
-end
 
 function get_demand_bus(d, d̂, B, d0)
     T, NΩ = size(d)
@@ -74,6 +43,36 @@ function get_demand_bus(d, d̂, B, d0)
     
     return new_d, new_d̂
     
+end
+
+function scale_demand(d_simu, initial_demand)
+    
+    min_val = minimum(d_simu)
+    max_val = maximum(d_simu)
+    max_orig = maximum(initial_demand.Initial_demand)
+    min_orig = minimum(initial_demand.Initial_demand)
+
+    return (d_simu .- min_val) ./ (max_val - min_val) .* (max_orig - min_orig) .+ min_orig
+end
+
+
+function simulate_demand(df_season, initial_demand, NΩ, B, seed)
+    std_error = mean(df_season.val_cargaenergiahomwmed_std)
+    T = size(df_season, 1)
+    d̂_simu = zeros(T, NΩ)
+    Random.seed!(seed)
+    for t in 1:T
+        d̂_simu[t, :]  = rand(Normal.(df_season[t, 2], df_season[t, 3]),NΩ)
+    end
+
+    d_simu = deepcopy(d̂_simu) .+ rand(Normal(0, std_error), T, NΩ)
+
+    d_simu = scale_demand(d_simu, initial_demand)
+    d̂_simu = scale_demand(d̂_simu, initial_demand)
+
+    d0    = initial_demand.Initial_demand
+    d, d̂  = get_demand_bus(d_simu, d̂_simu, B, d0)
+    return d, d̂
 end
 
 function get_data(path_data, experiment)
@@ -97,7 +96,7 @@ function DispachPerfectInformation(d,d̂)
     # Definir o modelo de otimização
     t1  = time()
     model = Model(Gurobi.Optimizer)
-    ##set_silent(model)
+    set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -166,7 +165,7 @@ function DispachPerfectInformation(d,d̂)
     optimize!(model)
     t3 = time()
 
-    return Results(value(expected_cost), 0., value.(g), value.(r_up),value.(r_dn),
+    return Results(value(expected_cost), 0., 0., value.(g), value.(r_up),value.(r_dn),
                     value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                     t2 - t1, t3 - t2, termination_status(model))
 end
@@ -174,10 +173,11 @@ end
 
 function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
                             fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
+    NΩ = size(d, 2)
     t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    ##set_silent(model)
+    set_silent(model)
 
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
@@ -197,6 +197,13 @@ function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing
     @variable(model, θ_RT[t in T, ω in Ω, b in B] >= 0)  # Variável θ^{RT}
 
     @variable(model, Δ[t in T, ω in Ω, i in G])
+
+    @variable(model, s_g_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_g_minus[t in T, ω in Ω, i in G] >= 0)
+    @variable(model, s_rup_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_rup_minus[t in T, ω in Ω, i in G] >= 0)
+    @variable(model, s_rdn_plus[t in T, ω in Ω, i in G] >= 0) 
+    @variable(model, s_rdn_minus[t in T, ω in Ω, i in G] >= 0)
 
     if ismissing(fixed_β0_g)
         @variable(model, β0_g[t in T, i in G])
@@ -222,12 +229,13 @@ function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing
 
     # Função objetivo
     @expression(model, penalty, λ * sum(Φ_g[t, i, b, l] + Φ_up[t, i, b, l] + Φ_dn[t, i, b, l] for l in L, b in B, i in G, t in T))
+    @expression(model, slack_penalty, c_slack * (1/NΩ)*sum((s_g_plus[t, ω, i] + s_g_minus[t,ω, i] + s_rup_plus[t,ω, i] + s_rup_minus[t,ω, i] + s_rdn_plus[t,ω, i] + s_rdn_minus[t,ω, i]) for t in T, i in G, ω in Ω))
     @expression(model, expected_cost, sum(p[ω] *
                                         sum(sum(c_g[i] * g[t, ω, i] + c_up[i] * r_up[t, ω, i] + c_dn[i] * r_dn[t, ω, i] for i in G) +
                                             sum(c_δ[b] * (δ[t, ω, b] + δ_RT[t, ω, b]) + c_γ[b] * (γ[t, ω, b] + γ_RT[t, ω, b]) for b in B)
                                             for t in T) 
                                         for ω in Ω))
-    @objective(model, Min, expected_cost + penalty)
+    @objective(model, Min, expected_cost + penalty + slack_penalty)
 
     # Restrição (2)
     @constraint(model, Rest2[ω in Ω, t in T, b in B], sum(g[t, ω, i] for i in Ub[b]) + sum(f[t, ω, j] for j in L_plus[b]) - sum(f[t, ω, j] for j in L_minus[b]) +
@@ -265,12 +273,12 @@ function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing
     @constraint(model, [t in T, ω in Ω, b in B], γ[t, ω, b] <= Gb[b])  # Restrição (17)
     @constraint(model, [t in T, ω in Ω, b in B], γ_RT[t, ω, b] <= Gb[b])  # Restrição (18)
 
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], g[t, ω, i] == β0_g[t, i] + sum(sum(β_g[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L))  # Restrição (19)
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_up[t, ω, i] == β0_up[t, i] + sum(sum(β_up[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L))  # Restrição (20)
-    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_dn[t, ω, i] == β0_dn[t, i] + sum(sum(β_dn[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L))  # Restrição (21)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], g[t, ω, i] == β0_g[t, i] + sum(sum(β_g[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L) + s_g_plus[t, ω, i] - s_g_minus[t, ω, i])  # Restrição (19)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_up[t, ω, i] == β0_up[t, i] + sum(sum(β_up[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L) + s_rup_plus[t, ω, i] - s_rup_minus[t, ω, i])  # Restrição (20)
+    @constraint(model, [t in T[nL+1:end], ω in Ω, i in G], r_dn[t, ω, i] == β0_dn[t, i] + sum(sum(β_dn[t, i, b, l] * d[t-l, ω, b] for b in B) for l in L) + s_rdn_plus[t, ω, i] - s_rdn_minus[t, ω, i])  # Restrição (21)
 
     @constraint(model, [t in T, i in G, b in B, l in L], Φ_g[t, i, b, l] - β_g[t, i, b, l] >= 0)  # Restrição (24)
-    @constraint(model, [t in T, i in G, b in B, l in L], Φ_g[t, i, b, l] + β_g[t, i, b, l] >= 0)  # Restrição (25)
+    @constraint(model, [t in T, i in G, b in B, l in L], Φ_g[t, i, b, l] + β_g[t, i, b, l] >= 0)  # RestrAição (25)
     @constraint(model, [t in T, i in G, b in B, l in L], Φ_up[t, i, b, l] - β_up[t, i, b, l] >= 0)  # Restrição (26)
     @constraint(model, [t in T, i in G, b in B, l in L], Φ_up[t, i, b, l] + β_up[t, i, b, l] >= 0)  # Restrição (27)
     @constraint(model, [t in T, i in G, b in B, l in L], Φ_dn[t, i, b, l] - β_dn[t, i, b, l] >= 0)  # Restrição (28)
@@ -282,12 +290,12 @@ function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing
     optimize!(model)
     t3 = time()
     if ismissing(fixed_β0_dn)
-        return  Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
+        return  Results(value(expected_cost), value.(penalty), value(slack_penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)),
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
     else
-        return  Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
+        return  Results(value(expected_cost), value.(penalty), value(slack_penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)),
                             Coeficients(β0_g, β0_up, β0_dn, β_g, β_up, β_dn)
@@ -328,12 +336,40 @@ function uniform_intervals(R, A, B)
     return upper_limits
 end
 
+function lift_demand(d,  max_d, min_d, R)
+
+    Z = uniform_intervals(R, min_d, max_d)
+    #println(Z)
+    d_lift = zeros(T[end], NΩ, R);
+    for ω in Ω
+        d_lift[:, ω, :] = create_lifted_variable(d[:, ω], Z)
+    end
+    return d_lift
+end
+
+function lift_demand_buses(d, d̂, R, B)
+    
+    d_lift = zeros(size(d)[1], size(d)[2], size(d)[3], R)
+    d̂_lift = zeros(size(d)[1], size(d)[2], size(d)[3], R)
+
+    for b in B
+        max_d = maximum(d[:, :, b])
+        min_d = minimum(d[:, :, b])
+
+        R = 5
+        d_lift[:, :, b, :] = lift_demand(d[:, :, b], max_d, min_d, R)
+        d̂_lift[:, :, b, :] = lift_demand(d̂[:, :, b], max_d, min_d, R)
+    end
+    return d_lift, d̂_lift
+end
+
 function DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
                                     fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
+    NΩ = size(d, 2)
     t1 = time()
     # Definir o modelo de otimização
     model = Model(Gurobi.Optimizer)
-    ##set_silent(model)
+    set_silent(model)
     # Índices e conjuntos
     @variable(model, g[t in T, ω in Ω, i in G] >= 0)  # Variável g para geração
     @variable(model, r_up[t in T, ω in Ω, i in G] >= 0)  # Variável de reserva para r^up
@@ -462,37 +498,16 @@ function DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift; fixed_β0_g = miss
     t3 = time()
 
     if ismissing(fixed_β0_dn)
-        return Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
+        return Results(value(expected_cost), value.(penalty), value(slack_penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)) ,
                     Coeficients(value.(β0_g), value.(β0_up), value.(β0_dn), value.(β_g), value.(β_up), value.(β_dn))
     else
-        return Results(value(expected_cost), value.(penalty), value.(g), value.(r_up),value.(r_dn),
+        return Results(value(expected_cost), value.(penalty), value(slack_penalty), value.(g), value.(r_up),value.(r_dn),
                             value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                             t2 - t1, t3 - t2, termination_status(model)) ,
                     Coeficients(β0_g, β0_up, β0_dn, β_g, β_up, β_dn)
     end
-end
-
-function lift_demand(d,  max_d, min_d, R)
-
-    Z = uniform_intervals(R, min_d, max_d)
-    #println(Z)
-    d_lift = zeros(T[end], NΩ, R);
-    for ω in Ω
-        d_lift[:, ω, :] = create_lifted_variable(d[:, ω], Z)
-    end
-    return d_lift
-end
-
-function scale_demand(d_simu, initial_demand)
-    
-    min_val = minimum(d_simu)
-    max_val = maximum(d_simu)
-    max_orig = maximum(initial_demand.Initial_demand)
-    min_orig = minimum(initial_demand.Initial_demand)
-
-    return (d_simu .- min_val) ./ (max_val - min_val) .* (max_orig - min_orig) .+ min_orig
 end
 
 function compute_metrics(results::Results)
@@ -505,8 +520,10 @@ function compute_metrics(results::Results)
     δ    = mean(sum(results.δ[t, :, b] for t in 1:24, b in 1:length(B)))
     δ_RT = mean(sum(results.δ_RT[t, :, b] for t in 1:24, b in 1:length(B)))
     Δ    = mean(sum(results.Δ[t, :, i] for t in 1:24, i in 1:length(G)))
+    results.termination_status == OPTIMAL ? status = 1 : status = 0
     
-    return Dict("g" => g, "r_up" => r_up, "r_dn" => r_dn , "γ" => γ, "γ_RT" => γ_RT, "δ"=> δ, "δ_RT" => δ_RT, "Δ" => Δ)
+    return Dict("g" => g, "r_up" => r_up, "r_dn" => r_dn , "γ" => γ, "γ_RT" => γ_RT, "δ"=> δ, "δ_RT" => δ_RT, "Δ" => Δ,
+                "cost" => results.cost, "penalty" => results.penalty, "slack_penalty" => results.slack_penalty, "status" => status)
 end
 
 function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
@@ -530,8 +547,6 @@ branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, exper
 
 df_season = CSV.read(path_data*"typical_day_SE_fall.csv", DataFrame)
 
-plot(df_season[:, "val_cargaenergiahomwmed_mean"])
-
 # Sets and indexes
 Lines   = collect(axes(branch, 1))
 B       = collect(1:length(bus.Bus_id))
@@ -549,8 +564,7 @@ end
 nL      = simulation.L[1]
 L       = collect(1:nL)
 T       = collect(1:simulation.T[1])
-NΩ      = 20#simulation.S[1]
-Ω       = collect(1:NΩ)
+
 
 Load = [i == 0 ? 0 : 1 for i in bus.Load_id]
 
@@ -566,7 +580,6 @@ c_slack = maximum(c_δ)
 c_γ   = ones(length(B))*(0.1*maximum(c_g))
 F     = branch.Transmission_Capacity 
 x     = branch.Reactance
-p     = ones(NΩ)/NΩ
 RD_dn = gen.Ramp_Limit
 RD_up = gen.Ramp_Limit
 R_dn  = gen.Max_gen
@@ -578,62 +591,50 @@ for b in B
         Gb[b] = sum(G_max[g] for g in Ub[b]) 
     end
 end
-
-std_error = mean(df_season.val_cargaenergiahomwmed_std)
-d_simu, d̂_simu = simulate_demand(df_season, NΩ, std_error, 123)
-
-d_simu = scale_demand(d_simu, initial_demand)
-d̂_simu = scale_demand(d̂_simu, initial_demand)
-d, d̂   = get_demand_bus(d_simu, d̂_simu, B, d0)
-
-
 R = 5
-d_lift = zeros(24, 20, 300, R)
-d̂_lift = zeros(24, 20, 300, R)
 
-for b in B
-    max_d = maximum(d[:, :, b])
-    min_d = minimum(d[:, :, b])
+# Cross Validation for \lambda
+λ_values = Int.(collect(0:100:1e3))
 
-    R = 5
-    d_lift[:, :, b, :] = lift_demand(d[:, :, b], max_d, min_d, R)
-    d̂_lift[:, :, b, :] = lift_demand(d̂[:, :, b], max_d, min_d, R)
+NΩ = 5
+Ω  = collect(1:NΩ)
+p  = ones(NΩ)/NΩ
+
+
+d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
+d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
+
+cv_ldr = []
+cv_pwl = []
+# Salvar os resultados para cada lambda
+for λ in Int.(λ_values)
+    @info(λ)
+    results_ldr, coefs_ldr = DispachLinear(λ, d, d̂);
+    push!(cv_ldr, results_ldr.cost)
+    metrics_ldr_cv = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
+    CSV.write(path_results*"results_ldr_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv)
+    results_pwl, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
+    push!(cv_pwl, results_pwl.cost)
+    metrics_pwl_cv = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
+    CSV.write(path_results*"results_pwl_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv)
 end
 
-λ = 0
+λ_ldr = λ_values[findmin(cv_ldr)[2]]
+λ_pwl = λ_values[findmin(cv_pwl)[2]]
+
+# In sample models
+
+NΩ = 40
+Ω  = collect(1:NΩ)
+p  = ones(NΩ)/NΩ
+
+d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
+d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
+
 
 results_pi             = DispachPerfectInformation();
-results_ldr, coefs_ldr = DispachLinear(λ, d, d̂);
-results_pwl, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
-
-# Simulando novos cenarios
-d_simu_new, d̂_simu_new = simulate_demand(df_season, NΩ, std_error, 0)
-
-d_simu_new = scale_demand(d_simu_new, initial_demand)
-d̂_simu_new = scale_demand(d̂_simu_new, initial_demand)
-d_new, d̂_new = get_demand_bus(d_simu_new, d̂_simu_new, B, d0)
-
-d_lift_new = zeros(24, 20, 300, R)
-d̂_lift_new = zeros(24, 20, 300, R)
-
-for b in B
-    max_d = maximum(d_new[:, :, b])
-    min_d = minimum(d_new[:, :, b])
-
-    R = 5
-    d_lift_new[:, :, b, :] = lift_demand(d_new[:, :, b], max_d, min_d, R)
-    d̂_lift_new[:, :, b, :] = lift_demand(d̂_new[:, :, b], max_d, min_d, R)
-end
-
-results_pi_out = DispachPerfectInformation();
-results_ldr_out, coefs_ldr_out = DispachLinear(λ,d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
-                                            fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
-                                            fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
-
-results_pwl_out, coefs_pwl_out = DispachPiecewiseLinear(λ, d_new, d̂_new, d_lift_new, d̂_lift_new; 
-                                                        fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
-                                                        fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
-                                                        fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
+results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
+results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift);
 
 
 metrics_pi_train  = round.(DataFrame(compute_metrics(results_pi)), digits = 3)
@@ -645,6 +646,21 @@ CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
 
+# OUt of sample models
+NΩ = simulation.S[1]
+d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ, B, 0)
+d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
+
+
+results_pi_out = DispachPerfectInformation();
+results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
+                                            fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
+                                            fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
+
+results_pwl_out, coefs_pwl_out = DispachPiecewiseLinear(λ_pwl, d_new, d̂_new, d_lift_new, d̂_lift_new; 
+                                                        fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
+                                                        fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
+                                                        fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
 
 metrics_pi_test  = round.(DataFrame(compute_metrics(results_pi_out)), digits = 3)
 CSV.write(path_results*"results_pi_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_test)
