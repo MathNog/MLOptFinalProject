@@ -592,7 +592,7 @@ end
 R = 5
 
 # Cross Validation for \lambda
-λ_values = Int.(collect(400:100:1e3))
+λ_values = Int.(collect(0:100:1e3))
 
 NΩ = 5
 Ω  = collect(1:NΩ)
