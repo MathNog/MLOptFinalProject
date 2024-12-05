@@ -28,7 +28,6 @@ mutable struct Coeficients
     β_dn::Array
 end
 
-
 function get_demand_bus(d, d̂, B, d0)
     T, NΩ = size(d)
     new_d = zeros(T[end], NΩ, length(B))
@@ -54,7 +53,6 @@ function scale_demand(d_simu, initial_demand)
 
     return (d_simu .- min_val) ./ (max_val - min_val) .* (max_orig - min_orig) .+ min_orig
 end
-
 
 function simulate_demand(df_season, initial_demand, NΩ, B, seed)
     std_error = mean(df_season.val_cargaenergiahomwmed_std)
@@ -169,7 +167,6 @@ function DispachPerfectInformation(d,d̂)
                     value.(γ),value.(γ_RT),value.(δ), value.(δ_RT), value.(Δ), 
                     t2 - t1, t3 - t2, termination_status(model))
 end
-
 
 function DispachLinear(λ, d, d̂; fixed_β0_g = missing, fixed_β0_up = missing, fixed_β0_dn = missing,
                             fixed_β_g = missing, fixed_β_up = missing, fixed_β_dn = missing)
@@ -338,6 +335,7 @@ end
 
 function lift_demand(d,  max_d, min_d, R)
 
+    NΩ = size(d)[2]
     Z = uniform_intervals(R, min_d, max_d)
     #println(Z)
     d_lift = zeros(T[end], NΩ, R);
@@ -356,7 +354,6 @@ function lift_demand_buses(d, d̂, R, B)
         max_d = maximum(d[:, :, b])
         min_d = minimum(d[:, :, b])
 
-        R = 5
         d_lift[:, :, b, :] = lift_demand(d[:, :, b], max_d, min_d, R)
         d̂_lift[:, :, b, :] = lift_demand(d̂[:, :, b], max_d, min_d, R)
     end
@@ -591,46 +588,73 @@ for b in B
         Gb[b] = sum(G_max[g] for g in Ub[b]) 
     end
 end
+
 R = 5
 
 # Cross Validation for \lambda
-λ_values = Int.(collect(0:100:1e3))
+λ_values = Int.(collect(400:100:1e3))
 
 NΩ = 5
 Ω  = collect(1:NΩ)
 p  = ones(NΩ)/NΩ
 
-
 d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
 d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
 
-cv_ldr = []
-cv_pwl = []
+# out of sample
+NΩ_out = 25
+Ω_out  = collect(1:NΩ_out)
+p_out  = ones(NΩ_out)/NΩ_out
+
+d_out, d̂_out = simulate_demand(df_season, initial_demand, NΩ_out, B, 456)
+d_lift_out, d̂_lift_out = lift_demand_buses(d_out, d̂_out, R, B)
+
+cv_ldr_in = []
+cv_pwl_in = []
+
+cv_ldr_out = []
+cv_pwl_out = []
 # Salvar os resultados para cada lambda
 for λ in Int.(λ_values)
     @info(λ)
-    results_ldr, coefs_ldr = DispachLinear(λ, d, d̂);
-    push!(cv_ldr, results_ldr.cost)
-    metrics_ldr_cv = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
-    CSV.write(path_results*"results_ldr_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv)
-    results_pwl, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
-    push!(cv_pwl, results_pwl.cost)
-    metrics_pwl_cv = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
-    CSV.write(path_results*"results_pwl_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv)
+    @info("In sample...")
+    results_ldr_in, coefs_ldr = DispachLinear(λ, d, d̂);
+    push!(cv_ldr_in, results_ldr_in.cost);
+    metrics_ldr_cv_in = round.(DataFrame(compute_metrics(results_ldr_in)), digits = 3);
+    CSV.write(path_results*"results_ldr_insample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_in);
+    results_pwl_in, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
+    push!(cv_pwl_in, results_pwl_in.cost)
+    metrics_pwl_cv_in = round.(DataFrame(compute_metrics(results_pwl_in)), digits = 3)
+    CSV.write(path_results*"results_pwl_insample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_in)
+
+    @info("Out of sample...")
+    results_ldr_out, coefs_ldr = DispachLinear(λ, d_out, d̂_out; fixed_β0_g = coefs_ldr.β0_g, 
+                                               fixed_β0_up = coefs_ldr.β0_up, fixed_β0_dn = coefs_ldr.β0_dn,
+                                               fixed_β_g = coefs_ldr.β_g, fixed_β_up = coefs_ldr.β_up,
+                                               fixed_β_dn = coefs_ldr.β_dn);
+    push!(cv_ldr_out, results_ldr_out.cost)
+    metrics_ldr_cv_out = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
+    CSV.write(path_results*"results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_out)
+
+    results_pwl_out, coefs_pwl = DispachPiecewiseLinear(λ, d_out, d̂_out, d_lift_out, d̂_lift_out; fixed_β0_g = coefs_pwl.β0_g, 
+                                                fixed_β0_up = coefs_pwl.β0_up, fixed_β0_dn = coefs_pwl.β0_dn,
+                                                fixed_β_g = coefs_pwl.β_g, fixed_β_up = coefs_pwl.β_up,
+                                                fixed_β_dn = coefs_pwl.β_dn);
+    push!(cv_pwl_out, results_pwl_out.cost);
+    metrics_pwl_cv_out = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3);
+    CSV.write(path_results*"results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_out);
 end
 
-λ_ldr = λ_values[findmin(cv_ldr)[2]]
-λ_pwl = λ_values[findmin(cv_pwl)[2]]
+λ_ldr = λ_values[findmin(cv_ldr_out)[2]]
+λ_pwl = λ_values[findmin(cv_pwl_out)[2]]
 
 # In sample models
-
 NΩ = 40
 Ω  = collect(1:NΩ)
 p  = ones(NΩ)/NΩ
 
 d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
 d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
-
 
 results_pi             = DispachPerfectInformation();
 results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
@@ -650,7 +674,6 @@ CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_
 NΩ = simulation.S[1]
 d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ, B, 0)
 d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
-
 
 results_pi_out = DispachPerfectInformation();
 results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
