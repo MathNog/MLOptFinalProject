@@ -592,7 +592,7 @@ end
 R = 5
 
 # Cross Validation for \lambda
-λ_values = Int.(collect(0:100:1e3))
+λ_values = Int.(collect(0:20:200))
 
 NΩ = 5
 Ω  = collect(1:NΩ)
@@ -648,6 +648,28 @@ end
 λ_ldr = λ_values[findmin(cv_ldr_out)[2]]
 λ_pwl = λ_values[findmin(cv_pwl_out)[2]]
 
+λ_cv = unique(Int.(vcat(collect(0:20:200), collect(200:100:1000))))
+costs_ldr = []
+costs_pwl = []
+for λ in λ_cv
+    results_ofs = CSV.read(path_results*"results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_ldr, results_ofs.cost[1])
+    results_ofs = CSV.read(path_results*"results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_pwl, results_ofs.cost[1])
+end
+
+λ_ldr = λ_cv[findmin(costs_ldr)[2]]
+λ_pwl = λ_cv[findmin(costs_pwl)[2]]
+
+
+plot(λ_cv, costs_ldr, label =  "ldr", lw = 2)
+plot!(λ_cv, costs_pwl, label =  "pwl", lw = 2)
+plot!([λ_ldr], [findmin(costs_ldr)[1]], label = "ldr opt", st = :scatter)
+plot!([λ_pwl], [findmin(costs_pwl)[1]], label = "pwl opt", st = :scatter)
+plot!(title = "λ cross validation",
+    xlabel="λ", ylabel = "cost (R\$)",
+    grid = :xy, xticks = λ_cv)
+
 # In sample models
 NΩ = 40
 Ω  = collect(1:NΩ)
@@ -656,7 +678,7 @@ p  = ones(NΩ)/NΩ
 d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
 d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
 
-results_pi             = DispachPerfectInformation();
+results_pi             = DispachPerfectInformation(d, d̂);
 results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
 results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift);
 
@@ -675,7 +697,7 @@ NΩ = simulation.S[1]
 d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ, B, 0)
 d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
 
-results_pi_out = DispachPerfectInformation();
+results_pi_out = DispachPerfectInformation(d_new, d̂_new);
 results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
                                             fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
                                             fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
