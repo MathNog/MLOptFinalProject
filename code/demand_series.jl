@@ -87,6 +87,17 @@ plot!(title = "South-east Hourly demand 2023",
     size = (850,500))
 savefig(path_presentation*"/SE_2023_demand.png")
 
+
+plot(df_sist.din_instante[1:first_fall], df_sist.val_cargaenergiahomwmed[1:first_fall], label = "summer", color = :orangered)
+plot!(df_sist.din_instante[first_fall:first_winter], df_sist.val_cargaenergiahomwmed[first_fall:first_winter],label = "fall", color = :darkorange)
+plot!(df_sist.din_instante[first_winter:first_spring], df_sist.val_cargaenergiahomwmed[first_winter:first_spring],label = "winter", color = :navyblue)
+plot!(df_sist.din_instante[first_spring:first_summer], df_sist.val_cargaenergiahomwmed[first_spring:first_summer],label = "spring", color = :mediumspringgreen)
+plot!(df_sist.din_instante[first_summer:end], df_sist.val_cargaenergiahomwmed[first_summer:end],label = "", color = :orangered)
+plot!(title = "South-east Hourly demand 2023",
+    xlabel = "Hour", ylabel = "Demand (MWh)",
+    size = (850,500))
+savefig(path_presentation*"/SE_2023_demand_colors.png")
+
 df_fall_full = df_sist[i_fall, :]
 plot(df_fall_full.din_instante, df_fall_full.val_cargaenergiahomwmed, 
         color = :chocolate, label = "", xlabel = "Hour", ylabel = "Demand (MWh)", title = "South-east Hourly demand Fall 2023")
