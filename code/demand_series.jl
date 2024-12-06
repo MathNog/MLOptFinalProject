@@ -1,6 +1,7 @@
 using CSV, DataFrames, Plots, Statistics, Dates, Distributions, Random
 
 path_data = pwd()*"/data/"
+path_presentation = pwd()*"/presentation/"
 
 function create_datetime_columns!(df, col_name)
     df[!, col_name] = DateTime.(df[!, col_name], "yyyy-mm-dd HH:MM:SS")
@@ -45,17 +46,48 @@ function compute_typical_day_demand(df, system)
     return df_fall, df_winter, df_spring, df_summer
 end
 
-
-
 df = CSV.read(path_data*"CURVA_CARGA_2023.csv", DataFrame)
 
 system = "SE"
 
 df_fall, df_winter, df_spring, df_summer = compute_typical_day_demand(df, system)
 
-plot(collect(1:24), df_day.demand_mw)
+
+p_mean = plot(df_fall.hour, df_fall.val_cargaenergiahomwmed_mean,
+    color = :chocolate, label = "", xlabel = "Hour", ylabel = "Mean Demand (MWh)", title = "South-east hourly mean demand Fall 2023")
+p_std = plot(df_fall.hour, df_fall.val_cargaenergiahomwmed_std,
+    color = :chocolate, label = "", xlabel = "Hour", ylabel = "Std Demand (MWh)", title = "South-east hourly std demand Fall 2023")
+plot(p_mean, p_std, layout = (2,1), size=(800,600))
+savefig(path_presentation*"/fall_typical_day.png")
+
+
+df_sist = filter_subsystem(df, "id_subsistema", system)
+create_datetime_columns!(df_sist, "din_instante");
 
 CSV.write(path_data * "typical_day_$(system)_fall.csv", df_fall)
 CSV.write(path_data * "typical_day_$(system)_spring.csv", df_spring)
 CSV.write(path_data * "typical_day_$(system)_winter.csv", df_winter)
 CSV.write(path_data * "typical_day_$(system)_summer.csv", df_summer)
+
+i_fall, i_winter, i_spring, i_summer = get_season_indexes(df_sist)
+
+
+first_fall = findfirst(x -> x==1, i_fall)
+first_winter = findfirst(x -> x==1, i_winter)
+first_spring = findfirst(x -> x==1, i_spring)
+first_summer = findlast(x -> x==0, i_summer)
+
+plot(df_sist.din_instante, df_sist.val_cargaenergiahomwmed, label= "")
+vline!(df_sist.din_instante[first_fall:first_fall], label = "summer/fall", color = :darkorange)
+vline!(df_sist.din_instante[first_winter:first_winter], label = "fall/winter", color = :navyblue)
+vline!(df_sist.din_instante[first_spring:first_spring], label = "winter/spring", color = :mediumspringgreen)
+vline!(df_sist.din_instante[first_summer:first_summer], label = "spring/summer", color = :orangered)
+plot!(title = "South-east Hourly demand 2023",
+    xlabel = "Hour", ylabel = "Demand (MWh)",
+    size = (850,500))
+savefig(path_presentation*"/SE_2023_demand.png")
+
+df_fall_full = df_sist[i_fall, :]
+plot(df_fall_full.din_instante, df_fall_full.val_cargaenergiahomwmed, 
+        color = :chocolate, label = "", xlabel = "Hour", ylabel = "Demand (MWh)", title = "South-east Hourly demand Fall 2023")
+savefig(path_presentation*"/SE_2023_fall_demand.png")
