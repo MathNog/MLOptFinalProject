@@ -72,6 +72,7 @@ CSV.write(path_data * "typical_day_$(system)_summer.csv", df_summer)
 i_fall, i_winter, i_spring, i_summer = get_season_indexes(df_sist)
 
 
+
 first_fall   = findfirst(x -> x==1, i_fall)
 first_winter = findfirst(x -> x==1, i_winter)
 first_spring = findfirst(x -> x==1, i_spring)
