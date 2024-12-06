@@ -1,5 +1,5 @@
 using JuMP, Gurobi, CSV, DataFrames
-using Plots,  Random, Distributions
+using Plots,  Random, Distributions, XLSX
 
 
 mutable struct Results
@@ -520,7 +520,8 @@ function compute_metrics(results::Results)
     results.termination_status == OPTIMAL ? status = 1 : status = 0
     
     return Dict("g" => g, "r_up" => r_up, "r_dn" => r_dn , "γ" => γ, "γ_RT" => γ_RT, "δ"=> δ, "δ_RT" => δ_RT, "Δ" => Δ,
-                "cost" => results.cost, "penalty" => results.penalty, "slack_penalty" => results.slack_penalty, "status" => status)
+                "cost" => results.cost, "penalty" => results.penalty, "slack_penalty" => results.slack_penalty, "status" => status,
+                "creation_time" => results.creation_time, "optimization_time" => results.optimization_time)
 end
 
 function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
@@ -536,8 +537,87 @@ function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
     ylabel!(ylabel)
 end
 
+function save_decision_variables(results)
+    g    = vec(mean(sum(results.g, dims = 3)[:,:,1], dims = 2))
+    r_up = vec(mean(sum(results.r_up, dims = 3)[:,:,1], dims = 2))
+    r_dn = vec(mean(sum(results.r_dn, dims = 3)[:,:,1], dims = 2))
+    γ    = vec(mean(sum(results.γ, dims = 3)[:,:,1], dims = 2))
+    γ_RT = vec(mean(sum(results.γ_RT, dims = 3)[:,:,1], dims = 2)) 
+    δ    = vec(mean(sum(results.δ, dims = 3)[:,:,1], dims = 2))
+    δ_RT = vec(mean(sum(results.δ_RT, dims = 3)[:,:,1], dims = 2)) 
+    Δ    = vec(mean(sum(results.Δ, dims = 3)[:,:,1], dims = 2))
+
+    return DataFrame("g" => g, "r_up" => r_up, "r_dn" => r_dn,
+                    "γ" => γ, "γ_RT" => γ_RT, "δ" => δ, "δ_RT" => δ_RT, "Δ" => Δ)
+end
+
+# Função para converter arrays em DataFrame
+function array_to_dataframe(array)
+    dims = size(array)
+    data = DataFrame(zeros(0, length(dims)+1), :auto)
+    
+    if length(dims) == 2
+        # Caso bidimensional
+        for i in 1:dims[1], j in 1:dims[2]
+            push!(data, (i, j, array[i, j]))
+        end
+        rename!(data, [:Index1, :Index2, :Value])
+    elseif length(dims) == 4
+        # Caso quadridimensional
+        for i in 1:dims[1], j in 1:dims[2], k in 1:dims[3], l in 1:dims[4]
+            push!(data, (i, j, k, l, array[i, j, k, l]))
+        end
+        rename!(data, [:Index1, :Index2, :Index3, :Index4, :Value])
+    elseif length(dims) == 5
+        # Caso quíntuplo
+        for i in 1:dims[1], j in 1:dims[2], k in 1:dims[3], l in 1:dims[4], m in 1:dims[5]
+            push!(data, (i, j, k, l, m, array[i, j, k, l, m]))
+        end
+        rename!(data, [:Index1, :Index2, :Index3, :Index4, :Index5, :Value])
+    end
+
+    return data
+end
+
+# Função para salvar os coeficientes em abas do Excel
+function save_coefficients_to_excel(file_name, coefficients::Coeficients)
+    XLSX.openxlsx(file_name, mode="w") do xf
+        i = 1
+        for field_name in fieldnames(Coeficients)
+            # Acessar o valor do campo dinamicamente
+            field_value = getfield(coefficients, field_name)
+            
+            # Converter o campo em DataFrame
+            df = array_to_dataframe(field_value)
+            
+            # Criar uma nova aba no Excel com o nome do campo
+            sheet_name = String(field_name)  # Converter símbolo para string
+            sheet_name = replace(sheet_name, "β" => "beta_")
+            sheet = xf[i]
+            XLSX.rename!(sheet, sheet_name)
+            sheet["A1:"] = Matrix(df)
+            i += 1
+            # XLSX.writetable!(xf, sheet_name, eachrow(df))
+        end
+    end
+end
+
+XLSX.openxlsx("my_new_file.xlsx", mode="w") do xf
+    sheet = xf[1]
+    XLSX.rename!(sheet, "new_sheet")
+    sheet["A1"] = "this"
+    sheet["A2"] = "is a"
+    sheet["A3"] = "new file"
+    sheet["A4"] = 100
+
+function Base.getindex(coeff::Coeficients, field_name::Symbol)
+    return getfield(coeff, field_name)
+end
+
+
 path_data = pwd() * "/data/"
 path_results = pwd()*"/results/"
+path_presentation = pwd()*"/presentation/"
 experiment = "Dataset - 300 bus system/"
 
 branch, bus, demand, gen, simulation, initial_demand = get_data(path_data, experiment);
@@ -603,11 +683,11 @@ d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
 
 
 # out of sample
-NΩ_out = 25
-Ω_out  = collect(1:NΩ_out)
-p_out  = ones(NΩ_out)/NΩ_out
+NΩ_new = 25
+Ω_out  = collect(1:NΩ_new)
+p_out  = ones(NΩ_new)/NΩ_new
 
-d_out, d̂_out = simulate_demand(df_season, initial_demand, NΩ_out, B, 456)
+d_out, d̂_out = simulate_demand(df_season, initial_demand, NΩ_new, B, 456)
 d_lift_out, d̂_lift_out = lift_demand_buses(d_out, d̂_out, R, B)
 
 cv_ldr_in = []
@@ -622,11 +702,11 @@ for λ in Int.(λ_values)
     results_ldr_in, coefs_ldr = DispachLinear(λ, d, d̂);
     push!(cv_ldr_in, results_ldr_in.cost);
     metrics_ldr_cv_in = round.(DataFrame(compute_metrics(results_ldr_in)), digits = 3);
-    CSV.write(path_results*"results_ldr_insample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_in);
+    CSV.write(path_results*"/cv/results_ldr_insample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_in);
     results_pwl_in, coefs_pwl = DispachPiecewiseLinear(λ, d, d̂, d_lift, d̂_lift);
     push!(cv_pwl_in, results_pwl_in.cost)
     metrics_pwl_cv_in = round.(DataFrame(compute_metrics(results_pwl_in)), digits = 3)
-    CSV.write(path_results*"results_pwl_insample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_in)
+    CSV.write(path_results*"/cv/results_pwl_insample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_in)
 
     @info("Out of sample...")
     results_ldr_out, coefs_ldr = DispachLinear(λ, d_out, d̂_out; fixed_β0_g = coefs_ldr.β0_g, 
@@ -635,7 +715,7 @@ for λ in Int.(λ_values)
                                                fixed_β_dn = coefs_ldr.β_dn);
     push!(cv_ldr_out, results_ldr_out.cost)
     metrics_ldr_cv_out = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
-    CSV.write(path_results*"results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_out)
+    CSV.write(path_results*"/cv/results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_ldr_cv_out)
 
     results_pwl_out, coefs_pwl = DispachPiecewiseLinear(λ, d_out, d̂_out, d_lift_out, d̂_lift_out; fixed_β0_g = coefs_pwl.β0_g, 
                                                 fixed_β0_up = coefs_pwl.β0_up, fixed_β0_dn = coefs_pwl.β0_dn,
@@ -643,55 +723,123 @@ for λ in Int.(λ_values)
                                                 fixed_β_dn = coefs_pwl.β_dn);
     push!(cv_pwl_out, results_pwl_out.cost);
     metrics_pwl_cv_out = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3);
-    CSV.write(path_results*"results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_out);
+    CSV.write(path_results*"/cv/results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", metrics_pwl_cv_out);
 end
 
 λ_ldr = λ_values[findmin(cv_ldr_out)[2]]
 λ_pwl = λ_values[findmin(cv_pwl_out)[2]]
 
 λ_cv = unique(Int.(vcat(collect(0:20:200), collect(200:100:1000))))
-costs_ldr = []
-costs_pwl = []
+costs_ldr_in = []
+costs_pwl_in = []
+costs_ldr_out = []
+costs_pwl_out = []
 for λ in λ_cv
-    results_ofs = CSV.read(path_results*"results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
-    push!(costs_ldr, results_ofs.cost[1])
-    results_ofs = CSV.read(path_results*"results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
-    push!(costs_pwl, results_ofs.cost[1])
+    results_ldr_out = CSV.read(path_results*"/cv/results_ldr_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_ldr_out, results_ldr_out.cost[1])
+    results_pwl_out = CSV.read(path_results*"/cv/results_pwl_outofsample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_pwl_out, results_pwl_out.cost[1])
+    results_ldr_in = CSV.read(path_results*"/cv/results_ldr_insample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_ldr_in, results_ldr_in.cost[1])
+    results_pwl_in = CSV.read(path_results*"/cv/results_pwl_insample_cv_lambda_$(λ)_scenarios.csv", DataFrame)
+    push!(costs_pwl_in, results_pwl_in.cost[1])
 end
 
-λ_ldr = λ_cv[findmin(costs_ldr)[2]]
-λ_pwl = λ_cv[findmin(costs_pwl)[2]]
+λ_ldr = λ_cv[findmin(costs_ldr_out)[2]]
+λ_pwl = λ_cv[findmin(costs_pwl_out)[2]]
 
 
-plot(λ_cv, costs_ldr, label =  "ldr", lw = 2)
-plot!(λ_cv, costs_pwl, label =  "pwl", lw = 2)
-plot!([λ_ldr], [findmin(costs_ldr)[1]], label = "ldr opt", st = :scatter)
-plot!([λ_pwl], [findmin(costs_pwl)[1]], label = "pwl opt", st = :scatter)
-plot!(title = "λ cross validation",
-    xlabel="λ", ylabel = "cost (R\$)",
-    grid = :xy, xticks = λ_cv)
+# plot(λ_cv, costs_ldr, label =  "ldr", lw = 2)
+# plot!(λ_cv, costs_pwl, label =  "pwl", lw = 2)
+# plot!([λ_ldr], [findmin(costs_ldr)[1]], label = "ldr opt", st = :scatter)
+# plot!([λ_pwl], [findmin(costs_pwl)[1]], label = "pwl opt", st = :scatter)
+# plot!(title = "λ cross validation",
+#     xlabel="λ", ylabel = "cost (R\$)",
+#     grid = :xy, xticks = λ_cv)
+# savefig(path_presentation*"cv_lambda.png")
 
-# In sample models
-NΩ = 40
+##############################################################
+###### Scenarios for in sample and out of sample models ######
+##############################################################
+
+NΩ = 20
 Ω  = collect(1:NΩ)
 p  = ones(NΩ)/NΩ
 
 d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
 d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
 
+NΩ_new = Int(simulation.S[1]/2)
+d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ_new, B, 0)
+d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
+
+# Plot demand scenarios
+plot(sum(d_new, dims = 3)[:,:,1], label = "")
+plot!(mean(sum(d_new, dims = 3)[:,:,1], dims = 2), lw = 2, color = :red, label = "mean")
+plot!(xlabel = "Hour", ylabel = "Demand (MWh)", title = "Typical day $NΩ scenarios")
+savefig(path_presentation*"/demand_scenarios_$(NΩ_new).png")
+
+########################################
+###### Perfect Information Models ######
+########################################
+
 results_pi             = DispachPerfectInformation(d, d̂);
-results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
-results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift);
-
-
 metrics_pi_train  = round.(DataFrame(compute_metrics(results_pi)), digits = 3)
-CSV.write(path_results*"results_pi_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_train)
+CSV.write(path_results*"results_insample_pi_scenarios_$(NΩ).csv", metrics_pi_train)
+CSV.write(path_results*"decision_variables_insample_pi_scenarios_$(NΩ).csv", save_decision_variables(results_pi))
 
+
+results_pi_out = DispachPerfectInformation(d_new, d̂_new);
+metrics_pi_test  = round.(DataFrame(compute_metrics(results_pi_out)), digits = 3)
+CSV.write(path_results*"results_outsample_pi_scenarios_$(NΩ_new).csv", metrics_pi_test)
+CSV.write(path_results*"decision_variables_outofsample_pi_scenarios_$(NΩ_new).csv", save_decision_variables(results_pi_out))
+
+
+#########################################
+###### Linear Decision Rule Models ######
+#########################################
+
+results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
 metrics_ldr_train = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
-CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_train)
+CSV.write(path_results*"results_insample_ldr_lambda_$(λ_ldr)_scenarios_$(NΩ).csv", metrics_ldr_train)
+CSV.write(path_results*"decision_variables_insample_ldr_$(λ_ldr)_scenarios_$(NΩ).csv", save_decision_variables(results_ldr))
+# save_coefficients_to_excel(path_results*"coefs_ldr_$(λ_ldr)_scenarios_$(NΩ).xlsx", coefs_ldr)
 
+
+results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
+                                            fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
+                                            fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
+metrics_ldr_test = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
+CSV.write(path_results*"results_ldr_out_lambda_$(λ_ldr)_scenarios_$(NΩ_new).csv", metrics_ldr_test)
+CSV.write(path_results*"decision_variables_out_ldr_$(λ_ldr)_scenarios_$(NΩ_new).csv", save_decision_variables(results_ldr_out))
+
+
+
+###################################################
+###### Piecewise Linear Decision Rule Models ######
+###################################################
+
+results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift);
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
-CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
+CSV.write(path_results*"results_insample_pwl_lambda_$(λ_pwl)_scenarios_$(NΩ).csv", metrics_pwl_train)
+CSV.write(path_results*"decision_variables_insample_pwl_$(λ_pwl)_scenarios_$(NΩ).csv", save_decision_variables(results_pwl))
+# save_coefficients_to_excel(path_results*"coefs_pwl_$(λ)_scenarios_$(NΩ).xlsx", coefs_pwl)
+
+
+
+results_pwl_out, coefs_pwl_out = DispachPiecewiseLinear(λ_pwl, d_new, d̂_new, d_lift_new, d̂_lift_new; 
+                                                        fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
+                                                        fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
+                                                        fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
+metrics_pwl_test = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3)
+CSV.write(path_results*"results_pwl_out_lambda_$(λ_pwl)_scenarios_$(NΩ_new).csv", metrics_pwl_test)
+CSV.write(path_results*"decision_variables_out_pwl_$(λ_pwl)_scenarios_$(NΩ_new).csv", save_decision_variables(results_pwl_out))
+
+
+################################
+###### Presentation Plots ######
+################################
+
 
 plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "Total in sample generation", "total generation (MW)")
 savefig(path_presentation*"/generation_in_sample.png")
@@ -701,38 +849,6 @@ savefig(path_presentation*"/reserve_up_in_sample.png")
 
 plot_results(24, results_pi.r_dn, results_ldr.r_dn, results_pi.r_dn, "Total in sample down-spinning reserve", "total down-spinning reserve (MW)")
 savefig(path_presentation*"/reserve_dn_in_sample.png")
-
-
-# OUt of sample models
-NΩ = simulation.S[1]
-d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ, B, 0)
-d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
-
-# Plot demand scenarios
-plot(sum(d_new, dims = 3)[:,:,1], label = "")
-plot!(mean(sum(d_new, dims = 3)[:,:,1], dims = 2), lw = 2, color = :red, label = "mean")
-plot!(xlabel = "Hour", ylabel = "Demand (MWh)", title = "Typical day $NΩ scenarios")
-savefig(path_presentation*"/demand_scenarios_$(NΩ).png")
-
-
-results_pi_out = DispachPerfectInformation(d_new, d̂_new);
-results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
-                                            fixed_β0_dn = coefs_ldr.β0_dn, fixed_β_g = coefs_ldr.β_g, 
-                                            fixed_β_up = coefs_ldr.β_up, fixed_β_dn = coefs_ldr.β_dn);
-
-results_pwl_out, coefs_pwl_out = DispachPiecewiseLinear(λ_pwl, d_new, d̂_new, d_lift_new, d̂_lift_new; 
-                                                        fixed_β0_g = coefs_pwl.β0_g, fixed_β0_up = coefs_pwl.β0_up, 
-                                                        fixed_β0_dn = coefs_pwl.β0_dn, fixed_β_g = coefs_pwl.β_g, 
-                                                        fixed_β_up = coefs_pwl.β_up, fixed_β_dn = coefs_pwl.β_dn);
-
-metrics_pi_test  = round.(DataFrame(compute_metrics(results_pi_out)), digits = 3)
-CSV.write(path_results*"results_pi_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pi_test)
-
-metrics_ldr_test = round.(DataFrame(compute_metrics(results_ldr_out)), digits = 3)
-CSV.write(path_results*"results_ldr_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_ldr_test)
-
-metrics_pwl_test = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3)
-CSV.write(path_results*"results_pwl_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_test)
 
 plot_results(24, results_pi_out.g, results_ldr_out.g, results_pwl_out.g, "Total out of sample generation", "total generation (MW)")
 savefig(path_presentation*"/generation_out_of_sample.png")
