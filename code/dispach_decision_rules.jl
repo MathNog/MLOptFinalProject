@@ -581,34 +581,21 @@ end
 
 # Função para salvar os coeficientes em abas do Excel
 function save_coefficients_to_excel(file_name, coefficients::Coeficients)
-    XLSX.openxlsx(file_name, mode="w") do xf
-        i = 1
-        for field_name in fieldnames(Coeficients)
-            # Acessar o valor do campo dinamicamente
-            field_value = getfield(coefficients, field_name)
-            
-            # Converter o campo em DataFrame
-            df = array_to_dataframe(field_value)
-            
-            # Criar uma nova aba no Excel com o nome do campo
-            sheet_name = String(field_name)  # Converter símbolo para string
-            sheet_name = replace(sheet_name, "β" => "beta_")
-            sheet = xf[i]
-            XLSX.rename!(sheet, sheet_name)
-            sheet["A1:"] = Matrix(df)
-            i += 1
-            # XLSX.writetable!(xf, sheet_name, eachrow(df))
-        end
+    
+    for field_name in fieldnames(Coeficients)
+        # Acessar o valor do campo dinamicamente
+        field_value = getfield(coefficients, field_name)
+        
+        # Converter o campo em DataFrame
+        df = array_to_dataframe(field_value)
+        
+        # Criar uma nova aba no Excel com o nome do campo
+        sheet_name = String(field_name)  # Converter símbolo para string
+        sheet_name = replace(sheet_name, "β" => "beta_")
+        CSV.write(file_name*sheet_name*".csv", df)
     end
 end
 
-XLSX.openxlsx("my_new_file.xlsx", mode="w") do xf
-    sheet = xf[1]
-    XLSX.rename!(sheet, "new_sheet")
-    sheet["A1"] = "this"
-    sheet["A2"] = "is a"
-    sheet["A3"] = "new file"
-    sheet["A4"] = 100
 
 function Base.getindex(coeff::Coeficients, field_name::Symbol)
     return getfield(coeff, field_name)
@@ -803,7 +790,7 @@ results_ldr, coefs_ldr = DispachLinear(λ_ldr, d, d̂);
 metrics_ldr_train = round.(DataFrame(compute_metrics(results_ldr)), digits = 3)
 CSV.write(path_results*"results_insample_ldr_lambda_$(λ_ldr)_scenarios_$(NΩ).csv", metrics_ldr_train)
 CSV.write(path_results*"decision_variables_insample_ldr_$(λ_ldr)_scenarios_$(NΩ).csv", save_decision_variables(results_ldr))
-# save_coefficients_to_excel(path_results*"coefs_ldr_$(λ_ldr)_scenarios_$(NΩ).xlsx", coefs_ldr)
+save_coefficients_to_excel(path_results*"/coefs/coefs_ldr_$(λ_ldr)_scenarios_$(NΩ)_", coefs_ldr)
 
 
 results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
@@ -823,7 +810,7 @@ results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_insample_pwl_lambda_$(λ_pwl)_scenarios_$(NΩ).csv", metrics_pwl_train)
 CSV.write(path_results*"decision_variables_insample_pwl_$(λ_pwl)_scenarios_$(NΩ).csv", save_decision_variables(results_pwl))
-# save_coefficients_to_excel(path_results*"coefs_pwl_$(λ)_scenarios_$(NΩ).xlsx", coefs_pwl)
+save_coefficients_to_excel(path_results*"/coefs/coefs_pwl_$(λ)_scenarios_$(NΩ)_", coefs_pwl)
 
 
 
