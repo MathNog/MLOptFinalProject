@@ -601,6 +601,7 @@ p  = ones(NΩ)/NΩ
 d, d̂ = simulate_demand(df_season, initial_demand, NΩ, B, 123)
 d_lift, d̂_lift = lift_demand_buses(d, d̂, R, B)
 
+
 # out of sample
 NΩ_out = 25
 Ω_out  = collect(1:NΩ_out)
@@ -692,10 +693,27 @@ CSV.write(path_results*"results_ldr_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_pwl_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_train)
 
+plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "Total in sample generation", "total generation (MW)")
+savefig(path_presentation*"/generation_in_sample.png")
+
+plot_results(24, results_pi.r_up, results_ldr.r_up, results_pi.r_up, "Total in sample up-spinning reserve", "total up-spinning reserve (MW)")
+savefig(path_presentation*"/reserve_up_in_sample.png")
+
+plot_results(24, results_pi.r_dn, results_ldr.r_dn, results_pi.r_dn, "Total in sample down-spinning reserve", "total down-spinning reserve (MW)")
+savefig(path_presentation*"/reserve_dn_in_sample.png")
+
+
 # OUt of sample models
 NΩ = simulation.S[1]
 d_new, d̂_new = simulate_demand(df_season, initial_demand, NΩ, B, 0)
 d_lift_new, d̂_lift_new = lift_demand_buses(d_new, d̂_new, R, B)
+
+# Plot demand scenarios
+plot(sum(d_new, dims = 3)[:,:,1], label = "")
+plot!(mean(sum(d_new, dims = 3)[:,:,1], dims = 2), lw = 2, color = :red, label = "mean")
+plot!(xlabel = "Hour", ylabel = "Demand (MWh)", title = "Typical day $NΩ scenarios")
+savefig(path_presentation*"/demand_scenarios_$(NΩ).png")
+
 
 results_pi_out = DispachPerfectInformation(d_new, d̂_new);
 results_ldr_out, coefs_ldr_out = DispachLinear(λ_ldr, d_new, d̂_new; fixed_β0_g = coefs_ldr.β0_g, fixed_β0_up = coefs_ldr.β0_up,
@@ -716,6 +734,11 @@ CSV.write(path_results*"results_ldr_out_lambda_$(λ)_scenarios_$(NΩ).csv", metr
 metrics_pwl_test = round.(DataFrame(compute_metrics(results_pwl_out)), digits = 3)
 CSV.write(path_results*"results_pwl_out_lambda_$(λ)_scenarios_$(NΩ).csv", metrics_pwl_test)
 
+plot_results(24, results_pi_out.g, results_ldr_out.g, results_pwl_out.g, "Total out of sample generation", "total generation (MW)")
+savefig(path_presentation*"/generation_out_of_sample.png")
 
+plot_results(24, results_pi_out.r_up, results_ldr_out.r_up, results_pwl_out.r_up, "Total out of sample up-spinning reserve", "total up-spinning reserve (MW)")
+savefig(path_presentation*"/reserve_up_out_of_sample.png")
 
-plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "title", "label")
+plot_results(24, results_pi_out.r_dn, results_ldr_out.r_dn, results_pwl_out.r_dn, "Total out of sample down-spinning reserve", "total down-spinning reserve (MW)")
+savefig(path_presentation*"/reserve_dn_out_of_sample.png")
