@@ -778,8 +778,8 @@ CSV.write(path_results*"decision_variables_insample_pi_scenarios_$(NΩ).csv", sa
 
 results_pi_out = DispachPerfectInformation(d_new, d̂_new);
 metrics_pi_test  = round.(DataFrame(compute_metrics(results_pi_out)), digits = 3)
-CSV.write(path_results*"results_outsample_pi_scenarios_$(NΩ_new).csv", metrics_pi_test)
-CSV.write(path_results*"decision_variables_outofsample_pi_scenarios_$(NΩ_new).csv", save_decision_variables(results_pi_out))
+CSV.write(path_results*"results_pi_out_scenarios_$(NΩ_new).csv", metrics_pi_test)
+CSV.write(path_results*"decision_variables_out_pi_scenarios_$(NΩ_new).csv", save_decision_variables(results_pi_out))
 
 
 #########################################
@@ -810,7 +810,7 @@ results_pwl, coefs_pwl = DispachPiecewiseLinear(λ_pwl, d, d̂, d_lift, d̂_lift
 metrics_pwl_train = round.(DataFrame(compute_metrics(results_pwl)), digits = 3)
 CSV.write(path_results*"results_insample_pwl_lambda_$(λ_pwl)_scenarios_$(NΩ).csv", metrics_pwl_train)
 CSV.write(path_results*"decision_variables_insample_pwl_$(λ_pwl)_scenarios_$(NΩ).csv", save_decision_variables(results_pwl))
-save_coefficients_to_excel(path_results*"/coefs/coefs_pwl_$(λ)_scenarios_$(NΩ)_", coefs_pwl)
+save_coefficients_to_excel(path_results*"/coefs/coefs_pwl_$(λ_pwl)_scenarios_$(NΩ)_", coefs_pwl)
 
 
 
@@ -828,14 +828,31 @@ CSV.write(path_results*"decision_variables_out_pwl_$(λ_pwl)_scenarios_$(NΩ_new
 ################################
 
 
-plot_results(24, results_pi.g, results_ldr.g, results_pi.g, "Total in sample generation", "total generation (MW)")
+plot_results(24, results_pi.g, results_ldr.g, results_pwl.g, "Total in sample generation", "total generation (MW)")
 savefig(path_presentation*"/generation_in_sample.png")
 
-plot_results(24, results_pi.r_up, results_ldr.r_up, results_pi.r_up, "Total in sample up-spinning reserve", "total up-spinning reserve (MW)")
+plot_results(24, results_pi.r_up, results_ldr.r_up, results_pwl.r_up, "Total in sample up-spinning reserve", "total up-spinning reserve (MW)")
 savefig(path_presentation*"/reserve_up_in_sample.png")
 
-plot_results(24, results_pi.r_dn, results_ldr.r_dn, results_pi.r_dn, "Total in sample down-spinning reserve", "total down-spinning reserve (MW)")
+plot_results(24, results_pi.r_dn, results_ldr.r_dn, results_pwl.r_dn, "Total in sample down-spinning reserve", "total down-spinning reserve (MW)")
 savefig(path_presentation*"/reserve_dn_in_sample.png")
+
+plot_results(24, results_pi.γ, results_ldr.γ, results_pwl.γ, "Total in sample generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_in_sample.png")
+
+plot_results(24, results_pi.γ_RT, results_ldr.γ_RT, results_pwl.γ_RT, "Total in sample real time generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_rt_in_sample.png")
+
+plot_results(24, results_pi.δ, results_ldr.δ, results_pwl.δ, "Total in sample load shedding", "total load shedding (MW)")
+savefig(path_presentation*"/load_shed_in_sample.png")
+
+plot_results(24, results_pi.δ_RT, results_ldr.δ_RT, results_pwl.δ_RT, "Total in sample real time load shedding", "total load shedding (MW)")
+savefig(path_presentation*"/load_shed_rt_in_sample.png")
+
+plot_results(24, results_pi.Δ, results_ldr.Δ , results_pwl.Δ , "Total in sample redispach", "total redispach (MW)")
+savefig(path_presentation*"/redispach_in_sample.png")
+
+# Out of sample plots
 
 plot_results(24, results_pi_out.g, results_ldr_out.g, results_pwl_out.g, "Total out of sample generation", "total generation (MW)")
 savefig(path_presentation*"/generation_out_of_sample.png")
@@ -845,3 +862,18 @@ savefig(path_presentation*"/reserve_up_out_of_sample.png")
 
 plot_results(24, results_pi_out.r_dn, results_ldr_out.r_dn, results_pwl_out.r_dn, "Total out of sample down-spinning reserve", "total down-spinning reserve (MW)")
 savefig(path_presentation*"/reserve_dn_out_of_sample.png")
+
+plot_results(24, results_pi_out.γ, results_ldr_out.γ, results_pwl_out.γ, "Total put of sample generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_in_sample.png")
+
+plot_results(24, results_pi_out.γ_RT, results_ldr_out.γ_RT, results_pwl_out.γ_RT, "Total put of sample real time generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_rt_in_sample.png")
+
+plot_results(24, results_pi_out.δ, results_ldr_out.δ, results_pwl_out.δ, "Total out of sample load shedding", "total load shedding (MW)")
+savefig(path_presentation*"/load_shed_out_of_sample.png")
+
+plot_results(24, results_pi_out.δ_RT, results_ldr_out.δ_RT, results_pwl_out.δ_RT, "Total out of sample real time load shedding", "total load shedding (MW)")
+savefig(path_presentation*"/load_shed_rt_out_of_sample.png")
+
+plot_results(24, results_pi_out.Δ, results_ldr_out.Δ , results_pwl_out.Δ , "Total out of sample redispach", "total redispach (MW)")
+savefig(path_presentation*"/redispach_out_of_sample.png")
