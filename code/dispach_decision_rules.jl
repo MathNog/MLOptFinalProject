@@ -518,10 +518,20 @@ function compute_metrics(results::Results)
     δ_RT = mean(sum(results.δ_RT[t, :, b] for t in 1:24, b in 1:length(B)))
     Δ    = mean(sum(results.Δ[t, :, i] for t in 1:24, i in 1:length(G)))
     results.termination_status == OPTIMAL ? status = 1 : status = 0
+    expected_g_cost = vec(sum(mean(results.g, dims = 2), dims = 1))'c_g
+    expected_rup_cost = vec(sum(mean(results.r_up, dims = 2), dims = 1))'c_up
+    expected_rdn_cost = vec(sum(mean(results.r_dn, dims = 2), dims = 1))'c_dn
+    expected_δ_cost = vec(sum(mean(results.δ, dims = 2), dims = 1))'c_δ
+    expected_δ_RT_cost = vec(sum(mean(results.δ_RT, dims = 2), dims = 1))'c_δ
+    expected_γ_cost = vec(sum(mean(results.γ, dims = 2), dims = 1))'c_γ
+    expected_γ_RT_cost = vec(sum(mean(results.γ_RT, dims = 2), dims = 1))'c_γ
     
     return Dict("g" => g, "r_up" => r_up, "r_dn" => r_dn , "γ" => γ, "γ_RT" => γ_RT, "δ"=> δ, "δ_RT" => δ_RT, "Δ" => Δ,
                 "cost" => results.cost, "penalty" => results.penalty, "slack_penalty" => results.slack_penalty, "status" => status,
-                "creation_time" => results.creation_time, "optimization_time" => results.optimization_time)
+                "creation_time" => results.creation_time, "optimization_time" => results.optimization_time,
+                "g_cost" => expected_g_cost, "rup_cost" => expected_rup_cost,  "rdn_cost" => expected_rdn_cost, 
+                "δ_cost" => expected_δ_cost, "δ_RT_cost" => expected_δ_RT_cost,
+                "γ_cost" => expected_γ_cost, "γ_RT_cost" => expected_γ_RT_cost)
 end
 
 function plot_results(T, y_pi, y_ldr, y_pwl, title, ylabel)
