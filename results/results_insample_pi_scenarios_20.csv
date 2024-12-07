@@ -1,2 +1,2 @@
-cost,creation_time,g,optimization_time,penalty,r_dn,r_up,slack_penalty,status,Δ,γ,γ_RT,δ,δ_RT
-72137.186,4.701,10431.06,23.854,0.0,335.781,2264.45,0.0,1.0,1928.669,0.0,0.0,0.0,0.0
+cost,creation_time,g,g_cost,optimization_time,penalty,r_dn,r_up,rdn_cost,rup_cost,slack_penalty,status,Δ,γ,γ_RT,γ_RT_cost,γ_cost,δ,δ_RT,δ_RT_cost,δ_cost
+72137.186,4.701,10431.06,67037.224,23.854,0.0,335.781,2264.45,639.353,4460.609,0.0,1.0,1928.669,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
