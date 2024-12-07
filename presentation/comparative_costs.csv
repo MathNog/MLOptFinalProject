@@ -1,0 +1,10 @@
+x1,x2,x3,x4,x5,x6,x7
+,In Sample,In Sample,In Sample,Out of Sample,Out of Sample,Out of Sample
+,PI,LDR,PWL,PI,LDR,PWL
+Total Generation,72137.186,171509.487,158742.027,72618.031,86804.712,86048.301
+Reserve Up,4460.609,7082.652,7432.897,3805.654,7611.346,7799.022
+Reserve Down,639.353,11081.827,9967.977,431.7,10799.811,9862.462
+Curtailment,0.0,50115.051,45142.282,0.0,0.0,0.0
+Real Time Curtailment,0.0,3415.348,4193.333,0.0,0.0,0.0
+Load Shedding,0.0,5974.354,752.612,0.0,0.0,0.0
+Real Time Load Shedding,0.0,0.0,0.0,0.0,0.0,0.0
