@@ -39,21 +39,22 @@ results = DataFrame(results,:auto)
 CSV.write(path_presentation*"/comparative_results.csv", results)
 
 
-costs_names = ["Total Generation",
+costs_names = ["Total", "Generation",
             "Reserve Up", "Reserve Down", 
             "Curtailment", "Real Time Curtailment",
             "Load Shedding", "Real Time Load Shedding"]
 
 total_cost = vcat(df_pi_in.cost, df_ldr_in.cost, df_pwl_in.cost, df_pi_out.cost, df_ldr_out.cost, df_pwl_out.cost)
-r_up_cost = vcat(df_pi_in.rup_cost, df_ldr_in.rup_cost, df_pwl_in.rup_cost, df_pi_out.rup_cost, df_ldr_out.rup_cost, df_pwl_out.rup_cost)
-r_dn_cost = vcat(df_pi_in.rdn_cost, df_ldr_in.rdn_cost, df_pwl_in.rdn_cost, df_pi_out.rdn_cost, df_ldr_out.rdn_cost, df_pwl_out.rdn_cost)
-γ_cost    = vcat(df_pi_in.γ_cost, df_ldr_in.γ_cost, df_pwl_in.γ_cost, df_pi_out.γ_cost, df_ldr_out.γ_cost, df_pwl_out.γ_cost)
-γ_RT_cost = vcat(df_pi_in.γ_RT_cost, df_ldr_in.γ_RT_cost, df_pwl_in.γ_RT_cost, df_pi_out.γ_RT_cost, df_ldr_out.γ_RT_cost, df_pwl_out.γ_RT_cost)
-δ_cost    = vcat(df_pi_in.δ_cost, df_ldr_in.δ_cost, df_pwl_in.δ_cost, df_pi_out.δ_cost, df_ldr_out.δ_cost, df_pwl_out.δ_cost)
-δ_RT_cost = vcat(df_pi_in.δ_RT_cost, df_ldr_in.δ_RT_cost, df_pwl_in.δ_RT_cost, df_pi_out.δ_RT_cost, df_ldr_out.δ_RT_cost, df_pwl_out.δ_RT_cost)
+g_cost     = vcat(df_pi_in.g_cost, df_ldr_in.g_cost, df_pwl_in.g_cost, df_pi_out.g_cost, df_ldr_out.g_cost, df_pwl_out.g_cost)
+r_up_cost  = vcat(df_pi_in.rup_cost, df_ldr_in.rup_cost, df_pwl_in.rup_cost, df_pi_out.rup_cost, df_ldr_out.rup_cost, df_pwl_out.rup_cost)
+r_dn_cost  = vcat(df_pi_in.rdn_cost, df_ldr_in.rdn_cost, df_pwl_in.rdn_cost, df_pi_out.rdn_cost, df_ldr_out.rdn_cost, df_pwl_out.rdn_cost)
+γ_cost     = vcat(df_pi_in.γ_cost, df_ldr_in.γ_cost, df_pwl_in.γ_cost, df_pi_out.γ_cost, df_ldr_out.γ_cost, df_pwl_out.γ_cost)
+γ_RT_cost  = vcat(df_pi_in.γ_RT_cost, df_ldr_in.γ_RT_cost, df_pwl_in.γ_RT_cost, df_pi_out.γ_RT_cost, df_ldr_out.γ_RT_cost, df_pwl_out.γ_RT_cost)
+δ_cost     = vcat(df_pi_in.δ_cost, df_ldr_in.δ_cost, df_pwl_in.δ_cost, df_pi_out.δ_cost, df_ldr_out.δ_cost, df_pwl_out.δ_cost)
+δ_RT_cost  = vcat(df_pi_in.δ_RT_cost, df_ldr_in.δ_RT_cost, df_pwl_in.δ_RT_cost, df_pi_out.δ_RT_cost, df_ldr_out.δ_RT_cost, df_pwl_out.δ_RT_cost)
 
 
-costs_values = Matrix(hcat(total_cost, r_up_cost, r_dn_cost, γ_cost, γ_RT_cost, δ_cost, δ_RT_cost)')
+costs_values = Matrix(hcat(total_cost, g_cost, r_up_cost, r_dn_cost, γ_cost, γ_RT_cost, δ_cost, δ_RT_cost)')
 results_costs = hcat(costs_names, costs_values)
 results_costs = vcat(reshape(header1, :, 7), reshape(header2, :, 7), results_costs)
 results_costs = DataFrame(results_costs,:auto)
