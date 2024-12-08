@@ -811,7 +811,6 @@ CSV.write(path_results*"results_ldr_out_lambda_$(λ_ldr)_scenarios_$(NΩ_new).cs
 CSV.write(path_results*"decision_variables_out_ldr_$(λ_ldr)_scenarios_$(NΩ_new).csv", save_decision_variables(results_ldr_out))
 
 
-
 ###################################################
 ###### Piecewise Linear Decision Rule Models ######
 ###################################################
