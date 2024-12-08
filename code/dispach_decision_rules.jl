@@ -872,11 +872,11 @@ savefig(path_presentation*"/reserve_up_out_of_sample.png")
 plot_results(24, results_pi_out.r_dn, results_ldr_out.r_dn, results_pwl_out.r_dn, "Total out of sample down-spinning reserve", "total down-spinning reserve (MW)")
 savefig(path_presentation*"/reserve_dn_out_of_sample.png")
 
-plot_results(24, results_pi_out.γ, results_ldr_out.γ, results_pwl_out.γ, "Total put of sample generation curtailment", "total generation curtailment (MW)")
-savefig(path_presentation*"/curtailment_in_sample.png")
+plot_results(24, results_pi_out.γ, results_ldr_out.γ, results_pwl_out.γ, "Total out of sample generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_out_of_sample.png")
 
-plot_results(24, results_pi_out.γ_RT, results_ldr_out.γ_RT, results_pwl_out.γ_RT, "Total put of sample real time generation curtailment", "total generation curtailment (MW)")
-savefig(path_presentation*"/curtailment_rt_in_sample.png")
+plot_results(24, results_pi_out.γ_RT, results_ldr_out.γ_RT, results_pwl_out.γ_RT, "Total out of sample real time generation curtailment", "total generation curtailment (MW)")
+savefig(path_presentation*"/curtailment_rt_out_of_sample.png")
 
 plot_results(24, results_pi_out.δ, results_ldr_out.δ, results_pwl_out.δ, "Total out of sample load shedding", "total load shedding (MW)")
 savefig(path_presentation*"/load_shed_out_of_sample.png")
